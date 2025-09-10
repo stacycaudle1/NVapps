@@ -24,6 +24,8 @@ class AppTracker(tk.Tk):
         self.title('Business Application Tracker')
         self.geometry('1000x700')
         self.minsize(900, 500)
+        # Open the application in full-screen mode
+        self.state('zoomed')
         # apply a modern ttk style
         self.setup_style()
         # window background
@@ -33,6 +35,14 @@ class AppTracker(tk.Tk):
             pass
         database.init_db()  # Ensure DB schema is correct before anything else
         self.create_widgets()
+        # Populate the department listbox after creating widgets
+        print("DEBUG: Initializing departments")  # Debug log
+        departments = self.get_departments()
+        print(f"DEBUG: Got departments: {departments}")  # Debug log
+        self.department_listbox.delete(0, 'end')
+        for dept_id, dept_name in departments:
+            print(f"DEBUG: Inserting department: {dept_name}")  # Debug log
+            self.department_listbox.insert('end', dept_name)
         self.refresh_table()
 
     def setup_style(self):
@@ -55,33 +65,34 @@ class AppTracker(tk.Tk):
         tree_font = ('Segoe UI', 9)
         heading_font = ('Segoe UI', 11, 'bold')
         style.configure('.', font=default_font)
-        style.configure('Treeview', rowheight=22, font=tree_font, background='white', fieldbackground='white')
+        style.configure('Treeview', rowheight=24, font=tree_font, background='white', fieldbackground='white')
         # Stronger heading style for visibility
-        style.configure('Treeview.Heading', font=heading_font, background=HEADER_BG, foreground=HEADER_FG, relief='raised', borderwidth=1, padding=(8,4))
+        style.configure('Treeview.Heading', font=heading_font, background=HEADER_BG, foreground=HEADER_FG, relief='flat', borderwidth=0, padding=(8,4))
         # Ensure mapping works across themes
         try:
             style.map('Treeview.Heading', background=[('active', HEADER_BG), ('!disabled', HEADER_BG)], foreground=[('active', HEADER_FG), ('!disabled', HEADER_FG)])
         except Exception:
             pass
-        style.configure('TButton', padding=6)
-        style.configure('TEntry', padding=4)
+        style.configure('TButton', padding=8, font=('Segoe UI', 10))
+        style.configure('TEntry', padding=6, font=('Segoe UI', 10))
         style.map('TButton', foreground=[('active', '!disabled', 'black')])
         # frame and window backgrounds
         style.configure('TFrame', background=WIN_BG)
         # Primary, Secondary and Danger button styles (uniform mapping)
-        style.configure('Primary.TButton', background=ACCENT, foreground='white')
+        style.configure('Primary.TButton', background=ACCENT, foreground='white', borderwidth=0)
         style.map('Primary.TButton', background=[('active', '!disabled', '#005a9e')], foreground=[('disabled', '#d0d0d0')])
-        style.configure('Secondary.TButton', background='#e1e1e1', foreground='black')
+        style.configure('Secondary.TButton', background='#e1e1e1', foreground='black', borderwidth=0)
         style.map('Secondary.TButton', background=[('active', '!disabled', '#cfcfcf')], foreground=[('disabled', '#a0a0a0')])
-        style.configure('Danger.TButton', background='#f8d7da', foreground='#8b0000')
+        style.configure('Danger.TButton', background='#f8d7da', foreground='#8b0000', borderwidth=0)
         style.map('Danger.TButton', background=[('active', '!disabled', '#f5c6cb')])
 
     def get_departments(self):
         conn = database.sqlite3.connect(database.DB_NAME)
         c = conn.cursor()
-        c.execute('SELECT id, name FROM departments')
+        c.execute('SELECT id, name FROM departments ORDER BY name ASC')
         departments = c.fetchall()
         conn.close()
+        print(f"DEBUG: Retrieved departments: {departments}")  # Debugging log
         return departments
 
     def add_department_popup(self):
@@ -189,22 +200,24 @@ class AppTracker(tk.Tk):
             messagebox.showinfo('Purge Complete', 'All data has been deleted.')
 
     def create_widgets(self):
+        # Initialize filter_combo early with a default ttk.Combobox instance
+        self.filter_combo = ttk.Combobox(values=['All'], width=24)
+        self.filter_combo.current(0)
+
         # use a PanedWindow to separate form and table
         paned = ttk.Panedwindow(self, orient='horizontal')
-        paned.pack(fill='both', expand=True, padx=12, pady=12)
+        paned.pack(fill='both', expand=True, padx=16, pady=16)
 
-        # Left frame: form
-        form_frame = ttk.Frame(paned, width=360)
+        form_frame = ttk.Frame(paned, width=360, padding=12)
         paned.add(form_frame, weight=0)
 
-        # Right frame: table and controls
-        right_frame = ttk.Frame(paned)
+        right_frame = ttk.Frame(paned, padding=12)
         paned.add(right_frame, weight=1)
 
         # Form content with consistent padding
-        padx = 6
-        pady = 6
-        ttk.Label(form_frame, text='App Name').grid(row=0, column=0, sticky='w', padx=padx, pady=pady)
+        padx = 8
+        pady = 8
+        ttk.Label(form_frame, text='App Name', font=('Segoe UI', 10, 'bold')).grid(row=0, column=0, sticky='w', padx=padx, pady=pady)
         self.name_entry = ttk.Entry(form_frame)
         self.name_entry.grid(row=0, column=1, sticky='ew', padx=padx, pady=pady)
 
@@ -231,69 +244,34 @@ class AppTracker(tk.Tk):
         self.vendor_entry.grid(row=10, column=1, sticky='ew', padx=padx, pady=pady)
 
         ttk.Label(form_frame, text='Departments').grid(row=11, column=0, sticky='nw', padx=padx, pady=pady)
-        self.department_listbox = tk.Listbox(form_frame, selectmode='multiple', exportselection=0, height=6)
-        self.department_listbox.grid(row=11, column=1, sticky='ew', padx=padx, pady=pady)
+        dept_frame = ttk.Frame(form_frame)
+        dept_frame.grid(row=11, column=1, sticky='nsew', padx=padx, pady=pady)
+        
+        # Set minimum size for the department frame
+        dept_frame.grid_propagate(False)
+        dept_frame.configure(width=300, height=200)  # Set explicit size
+
+        # Create department listbox with white background and increased height
+        self.department_listbox = tk.Listbox(dept_frame, selectmode='multiple', exportselection=0, 
+                                           height=15, width=40, bg='white', font=('Segoe UI', 10))
+        self.department_listbox.pack(side='left', fill='both', expand=True)
+
+        dept_scrollbar = ttk.Scrollbar(dept_frame, orient='vertical', command=self.department_listbox.yview)
+        dept_scrollbar.pack(side='right', fill='y')
+        self.department_listbox.configure(yscrollcommand=dept_scrollbar.set)
+        
+        # Ensure the department frame expands properly
+        form_frame.grid_columnconfigure(1, weight=1)
+        dept_frame.grid_configure(pady=(pady, pady*2))  # Add extra padding below
+        dept_frame.pack_propagate(False)
+
         ttk.Button(form_frame, text='Add Dept', command=self.add_department_popup, style='Primary.TButton').grid(row=12, column=0, padx=padx, pady=pady)
         ttk.Button(form_frame, text='Manage Depts', command=self.manage_departments_popup, style='Secondary.TButton').grid(row=12, column=1, padx=padx, pady=pady)
 
         ttk.Button(form_frame, text='Add Application', command=self.add_application, style='Primary.TButton').grid(row=13, column=0, columnspan=2, sticky='ew', pady=(12,6), padx=padx)
         ttk.Button(form_frame, text='Purge Database', command=self.purge_database_gui, style='Danger.TButton').grid(row=14, column=0, columnspan=2, sticky='ew', padx=padx)
 
-        # fill listbox
-        self.department_listbox.delete(0, 'end')
-        for dept_id, dept_name in self.get_departments():
-            self.department_listbox.insert('end', dept_name)
-        # Rating scale and scoring explanation shown below the purge button
-        rating_help = (
-            'Rating Scale (1-10)\n'
-            'For each attribute, rate the application:\n'
-            '• 1 = Very Low Impact/Importance\n'
-            '• 10 = Extremely High Impact/Importance\n'
-            'Example for Criticality:\n'
-            '  • 1-3 = Minor/non-core tool\n'
-            '  • 4-6 = Useful but replaceable\n'
-            '  • 7-10 = Mission critical\n'
-            '\n'
-            'For each application:\n'
-            'Total Score = ∑ (Rating × Weight)\n'
-            '• Ratings are on a 1-10 scale.\n'
-            '• Weights are percentages converted to decimals.\n'
-            '• Maximum possible score = 10 × 1.00 = 10.0.'
-        )
-        # Use a small frame with a Text widget and vertical scrollbar so the help text can scroll
-        rating_frame = ttk.Frame(form_frame)
-        rating_frame.grid(row=15, column=0, columnspan=2, sticky='nsew', padx=padx, pady=(8,0))
-        rating_text = tk.Text(rating_frame, wrap='word', height=8, width=40)
-        rating_vsb = ttk.Scrollbar(rating_frame, orient='vertical', command=rating_text.yview)
-        rating_text.configure(yscrollcommand=rating_vsb.set)
-        rating_text.grid(row=0, column=0, sticky='nsew')
-        rating_vsb.grid(row=0, column=1, sticky='ns')
-        # Insert with tags for better readability (headings, bullets, indentation)
-        rating_text.tag_configure('heading', font=('Segoe UI', 10, 'bold'))
-        rating_text.tag_configure('bullet', lmargin1=12, lmargin2=24)
-        rating_text.tag_configure('normal', font=('Segoe UI', 10))
-
-        rating_text.insert('end', 'Rating Scale (1–10)\n', 'heading')
-        rating_text.insert('end', '\nFor each attribute, rate the application:\n', 'normal')
-        rating_text.insert('end', '• 1 = Very Low Impact/Importance\n', 'bullet')
-        rating_text.insert('end', '• 10 = Extremely High Impact/Importance\n\n', 'bullet')
-
-        rating_text.insert('end', 'Example for Criticality:\n', 'heading')
-        rating_text.insert('end', '  • 1–3 = Minor/non-core tool\n', 'bullet')
-        rating_text.insert('end', '  • 4–6 = Useful but replaceable\n', 'bullet')
-        rating_text.insert('end', '  • 7–10 = Mission critical\n\n', 'bullet')
-
-        rating_text.insert('end', 'For each application:\n', 'heading')
-        rating_text.insert('end', 'Total Score = ∑ (Rating × Weight)\n', 'normal')
-        rating_text.insert('end', '• Ratings are on a 1–10 scale.\n', 'bullet')
-        rating_text.insert('end', '• Weights are percentages converted to decimals.\n', 'bullet')
-        rating_text.insert('end', '• Maximum possible score = 10 × 1.00 = 10.0.\n', 'bullet')
-        rating_text.configure(state='disabled')
-
-        rating_frame.rowconfigure(0, weight=1)
-        rating_frame.columnconfigure(0, weight=1)
-
-        # add edit controls above the table
+        # Add 'Create Note' and 'Save Note' buttons to the top right of the 'Save Changes' button
         edit_frame = ttk.Frame(right_frame)
         edit_frame.pack(fill='x', pady=(0,6))
         ttk.Button(edit_frame, text='Edit Selected', command=self.load_selected_for_edit, style='Secondary.TButton').pack(side='left', padx=6)
@@ -477,11 +455,16 @@ class AppTracker(tk.Tk):
         if hasattr(self, 'filter_combo'):
             filter_dept = self.filter_combo.get()
         c.execute('''SELECT id, name, vendor, stability, need, criticality, installed, disasterrecovery, safety, security, monetary, customerservice, last_modified FROM applications''')
+        rows = []
         for app_row in c.fetchall():
             app_id = app_row[0]
             depts = database.get_app_departments(app_id)
             dept_str = ', '.join(depts)
-            risk_score, risk_level = database.calculate_business_risk(app_row)
+            risk_score, risk_level = 0, 'Unknown'  # Initialize risk_score and risk_level
+            try:
+                risk_score, risk_level = database.calculate_business_risk(app_row)
+            except Exception:
+                pass
             # app_row indices: 1:name,2:vendor,3:stability,4:need,5:criticality,6:installed,7:disasterrecovery,8:safety,9:security,10:monetary,11:customerservice
             # Format last_modified as date-only (YYYY-MM-DD) for display
             last_mod_raw = app_row[12]
@@ -499,6 +482,10 @@ class AppTracker(tk.Tk):
             )
             if filter_dept and filter_dept != 'All' and filter_dept not in depts:
                 continue
+            rows.append((row, app_id, risk_score))
+        # Sort rows by the 'Name' column (index 0)
+        rows.sort(key=lambda x: x[0][0].lower())
+        for row, app_id, risk_score in rows:
             color = get_risk_color(risk_score)
             # store the app id as the item iid so we can identify it later
             self.tree.insert('', 'end', iid=str(app_id), values=row, tags=(color,))
@@ -508,7 +495,7 @@ class AppTracker(tk.Tk):
         conn.close()
 
     def on_tree_select(self, event):
-        # called when a row is selected; fill the details_text with a readable summary
+        # called when a row is selected; fill the details_text with notes only
         try:
             sel = self.tree.selection()
             if not sel:
@@ -518,60 +505,59 @@ class AppTracker(tk.Tk):
                 self.details_text.configure(state='disabled')
                 return
             item = sel[0]
-            vals = self.tree.item(item, 'values')
             # store selected app id (we set iid to app id when inserting)
             try:
                 self.selected_app_id = int(item)
             except Exception:
                 self.selected_app_id = None
-            # fetch notes and full app row from DB if possible
-            app_row = None
+            # fetch notes from DB if possible
+            notes = None
             if self.selected_app_id is not None:
                 app_row = database.get_application(self.selected_app_id)
-            # build a simple labeled summary
-            headers = list(self.tree['columns'])
-            lines = []
-            for h, v in zip(headers, vals):
-                lines.append(f"{h}: {v}")
-            # append notes if available (from DB)
-            if app_row is not None:
-                notes = app_row[12] if len(app_row) > 12 else None
-                if notes:
-                    lines.append('')
-                    lines.append('Notes:')
-                    lines.append(notes)
-            text = '\n'.join(lines)
+                if app_row is not None and len(app_row) > 12:
+                    notes = app_row[12]
+            # display notes or default text
             self.details_text.configure(state='normal')
             self.details_text.delete('1.0', 'end')
-            self.details_text.insert('end', text)
+            if notes:
+                self.details_text.insert('end', notes)
+            else:
+                self.details_text.insert('end', 'No notes')
             self.details_text.configure(state='disabled')
         except Exception:
             pass
 
     def create_note(self):
-        # Allow creating a note for the currently selected app
+        # Allow appending a note for the currently selected app
         if not hasattr(self, 'selected_app_id') or self.selected_app_id is None:
             messagebox.showinfo('Create Note', 'Please select an application to create a note for.')
             return
         try:
             self.details_text.configure(state='normal')
-            self.details_text.delete('1.0', 'end')  # Clear existing content for new note
+            existing_notes = self.details_text.get('1.0', 'end').strip()
+            if existing_notes == 'No notes':
+                existing_notes = ''
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            new_note = f"[{timestamp}]\n"
+            self.details_text.delete('1.0', 'end')  # Clear existing content
+            self.details_text.insert('1.0', f"{new_note}\n{existing_notes}")  # Append new note at the top
+            self.details_text.mark_set('insert', f'1.{len(new_note)}')  # Place cursor after the timestamp
             self.details_text.focus_set()
         except Exception:
             messagebox.showerror('Error', 'Failed to prepare note creation.')
 
     def save_notes(self):
-        # save notes text into DB for selected app
+        # Save notes text into DB for selected app
         if not hasattr(self, 'selected_app_id') or self.selected_app_id is None:
             messagebox.showinfo('Save Note', 'Please select an application to save notes for.')
             return
         try:
             text = self.details_text.get('1.0', 'end').strip()
-            # update notes via database helper
+            # Update notes via database helper
             database.update_application(self.selected_app_id, {'notes': text})
-            # make read-only again
+            # Make read-only again
             self.details_text.configure(state='disabled')
-            # refresh table to reflect last_modified change
+            # Refresh table to reflect last_modified change
             self.refresh_table()
             messagebox.showinfo('Saved', 'Notes saved.')
         except Exception:
@@ -599,6 +585,13 @@ class AppTracker(tk.Tk):
                 return datetime.fromisoformat(value)
             except ValueError:
                 return value.lower() if isinstance(value, str) else value
+
+    def refresh_departments(self):
+        # Refresh the department listbox with current data
+        self.department_listbox.delete(0, 'end')
+        departments = self.get_departments()
+        for dept_id, dept_name in departments:
+            self.department_listbox.insert('end', dept_name)
 
 if __name__ == '__main__':
     app = AppTracker()
