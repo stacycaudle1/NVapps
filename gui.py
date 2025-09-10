@@ -51,9 +51,11 @@ class AppTracker(tk.Tk):
         except Exception:
             pass
         default_font = ('Segoe UI', 10)
+        # slightly smaller font for table rows to improve density
+        tree_font = ('Segoe UI', 9)
         heading_font = ('Segoe UI', 11, 'bold')
         style.configure('.', font=default_font)
-        style.configure('Treeview', rowheight=26, font=default_font, background='white', fieldbackground='white')
+        style.configure('Treeview', rowheight=22, font=tree_font, background='white', fieldbackground='white')
         # Stronger heading style for visibility
         style.configure('Treeview.Heading', font=heading_font, background=HEADER_BG, foreground=HEADER_FG, relief='raised', borderwidth=1, padding=(8,4))
         # Ensure mapping works across themes
@@ -290,11 +292,14 @@ class AppTracker(tk.Tk):
 
         rating_frame.rowconfigure(0, weight=1)
         rating_frame.columnconfigure(0, weight=1)
+
         # add edit controls above the table
         edit_frame = ttk.Frame(right_frame)
         edit_frame.pack(fill='x', pady=(0,6))
         ttk.Button(edit_frame, text='Edit Selected', command=self.load_selected_for_edit, style='Secondary.TButton').pack(side='left', padx=6)
         ttk.Button(edit_frame, text='Save Changes', command=self.save_edit, style='Primary.TButton').pack(side='left', padx=6)
+        ttk.Button(edit_frame, text='Create Note', command=self.create_note, style='Secondary.TButton').pack(side='left', padx=6)
+        ttk.Button(edit_frame, text='Save Note', command=self.save_notes, style='Primary.TButton').pack(side='left', padx=6)
 
         # Right frame: filter + table
         control_frame = ttk.Frame(right_frame)
@@ -330,7 +335,7 @@ class AppTracker(tk.Tk):
             w = base_widths.get(col, 100)
             anchor = 'w' if col in ('Name', 'Vendor', 'Departments') else 'center'
             heading_text = 'DR' if col == 'DisasterRecovery' else col
-            self.tree.heading(col, text=heading_text)
+            self.tree.heading(col, text=heading_text, command=lambda _col=col: self.sort_table(_col, False))
             self.tree.column(col, width=w, anchor=anchor, stretch=True)
 
         # vertical scrollbar only; horizontal scrolling removed to keep table fit
@@ -514,11 +519,27 @@ class AppTracker(tk.Tk):
                 return
             item = sel[0]
             vals = self.tree.item(item, 'values')
+            # store selected app id (we set iid to app id when inserting)
+            try:
+                self.selected_app_id = int(item)
+            except Exception:
+                self.selected_app_id = None
+            # fetch notes and full app row from DB if possible
+            app_row = None
+            if self.selected_app_id is not None:
+                app_row = database.get_application(self.selected_app_id)
             # build a simple labeled summary
             headers = list(self.tree['columns'])
             lines = []
             for h, v in zip(headers, vals):
                 lines.append(f"{h}: {v}")
+            # append notes if available (from DB)
+            if app_row is not None:
+                notes = app_row[12] if len(app_row) > 12 else None
+                if notes:
+                    lines.append('')
+                    lines.append('Notes:')
+                    lines.append(notes)
             text = '\n'.join(lines)
             self.details_text.configure(state='normal')
             self.details_text.delete('1.0', 'end')
@@ -526,6 +547,58 @@ class AppTracker(tk.Tk):
             self.details_text.configure(state='disabled')
         except Exception:
             pass
+
+    def create_note(self):
+        # Allow creating a note for the currently selected app
+        if not hasattr(self, 'selected_app_id') or self.selected_app_id is None:
+            messagebox.showinfo('Create Note', 'Please select an application to create a note for.')
+            return
+        try:
+            self.details_text.configure(state='normal')
+            self.details_text.delete('1.0', 'end')  # Clear existing content for new note
+            self.details_text.focus_set()
+        except Exception:
+            messagebox.showerror('Error', 'Failed to prepare note creation.')
+
+    def save_notes(self):
+        # save notes text into DB for selected app
+        if not hasattr(self, 'selected_app_id') or self.selected_app_id is None:
+            messagebox.showinfo('Save Note', 'Please select an application to save notes for.')
+            return
+        try:
+            text = self.details_text.get('1.0', 'end').strip()
+            # update notes via database helper
+            database.update_application(self.selected_app_id, {'notes': text})
+            # make read-only again
+            self.details_text.configure(state='disabled')
+            # refresh table to reflect last_modified change
+            self.refresh_table()
+            messagebox.showinfo('Saved', 'Notes saved.')
+        except Exception:
+            messagebox.showerror('Error', 'Failed to save notes.')
+
+    def sort_table(self, col, reverse):
+        # Sort the table by the given column
+        try:
+            data = [(self.tree.set(k, col), k) for k in self.tree.get_children('')]
+            data.sort(reverse=reverse, key=lambda t: self._convert_sort_value(t[0]))
+
+            for index, (val, k) in enumerate(data):
+                self.tree.move(k, '', index)
+
+            self.tree.heading(col, command=lambda: self.sort_table(col, not reverse))
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to sort table: {e}')
+
+    def _convert_sort_value(self, value):
+        # Helper to convert values for sorting (e.g., numeric, date, or string)
+        try:
+            return float(value)
+        except ValueError:
+            try:
+                return datetime.fromisoformat(value)
+            except ValueError:
+                return value.lower() if isinstance(value, str) else value
 
 if __name__ == '__main__':
     app = AppTracker()
