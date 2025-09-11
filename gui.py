@@ -61,11 +61,11 @@ class AppTracker(tk.Tk):
         except Exception:
             pass
         default_font = ('Segoe UI', 10)
-        # slightly smaller font for table rows to improve density
-        tree_font = ('Segoe UI', 9)
-        heading_font = ('Segoe UI', 11, 'bold')
+        # Smaller font for table rows to ensure text fits in cells
+        tree_font = ('Segoe UI', 8)
+        heading_font = ('Segoe UI', 10, 'bold')
         style.configure('.', font=default_font)
-        style.configure('Treeview', rowheight=24, font=tree_font, background='white', fieldbackground='white')
+        style.configure('Treeview', rowheight=28, font=tree_font, background='white', fieldbackground='white')
         # Stronger heading style for visibility
         style.configure('Treeview.Heading', font=heading_font, background=HEADER_BG, foreground=HEADER_FG, relief='flat', borderwidth=0, padding=(8,4))
         # Ensure mapping works across themes
@@ -85,11 +85,14 @@ class AppTracker(tk.Tk):
         style.map('Secondary.TButton', background=[('active', '!disabled', '#cfcfcf')], foreground=[('disabled', '#a0a0a0')])
         style.configure('Danger.TButton', background='#f8d7da', foreground='#8b0000', borderwidth=0)
         style.map('Danger.TButton', background=[('active', '!disabled', '#f5c6cb')])
+        # Green button style for note functions
+        style.configure('Success.TButton', background='#90EE90', foreground='black', borderwidth=0)  # Light green
+        style.map('Success.TButton', background=[('active', '!disabled', '#7CCD7C')], foreground=[('disabled', '#a0a0a0')])
 
     def get_departments(self):
         conn = database.sqlite3.connect(database.DB_NAME)
         c = conn.cursor()
-        c.execute('SELECT id, name FROM departments ORDER BY name ASC')
+        c.execute('SELECT id, name FROM business_units ORDER BY name ASC')
         departments = c.fetchall()
         conn.close()
         print(f"DEBUG: Retrieved departments: {departments}")  # Debugging log
@@ -108,7 +111,7 @@ class AppTracker(tk.Tk):
                 return
             conn = database.sqlite3.connect(database.DB_NAME)
             c = conn.cursor()
-            c.execute('INSERT OR IGNORE INTO departments (name) VALUES (?)', (dept_name,))
+            c.execute('INSERT OR IGNORE INTO business_units (name) VALUES (?)', (dept_name,))
             conn.commit()
             conn.close()
             # Update department_listbox with new departments
@@ -122,36 +125,94 @@ class AppTracker(tk.Tk):
 
         ttk.Button(popup, text='Add', command=add_dept, style='Primary.TButton').pack(padx=10, pady=10)
 
+    def report_sort_table(self, tree, col, reverse):
+        # Sort function specifically for the report window
+        try:
+            # Get data for sorting
+            data = [(tree.set(k, col), k) for k in tree.get_children('')]
+            
+            # Sort the data based on appropriate type conversion
+            data.sort(reverse=reverse, key=lambda t: self._convert_report_value(t[0]))
+            
+            # Rearrange items in the tree
+            for index, (val, k) in enumerate(data):
+                tree.move(k, '', index)
+                
+            # Update the heading to show sort direction and set command for next sort
+            sort_direction = "▼" if reverse else "▲"  # Down arrow for descending, up for ascending
+            
+            # Get original heading text without any arrows
+            heading_text = tree.heading(col, 'text').replace("▲", "").replace("▼", "").strip()
+            
+            # Reset all column headings to remove any previous sort indicators
+            for column in tree['columns']:
+                if column != col:  # Skip the column we're currently sorting
+                    current_text = tree.heading(column, 'text').replace("▲", "").replace("▼", "").strip()
+                    tree.heading(column, text=current_text)
+            
+            # Set new heading with sort indicator
+            tree.heading(col, text=f"{heading_text} {sort_direction}", 
+                        command=lambda: self.report_sort_table(tree, col, not reverse))
+                
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to sort report table: {e}')
+    
+    def _convert_report_value(self, value):
+        # Helper to convert values for sorting in reports
+        if not value:
+            return ""  # Empty values sort first
+        
+        # Try to convert to number
+        try:
+            return float(value)
+        except ValueError:
+            pass
+        
+        # Default: return lowercase string for case-insensitive sorting
+        return value.lower() if isinstance(value, str) else value
+    
     def show_report(self):
         report_win = tk.Toplevel(self)
-        report_win.title('Department Risk Report')
-        tree = ttk.Treeview(report_win, columns=('Department', 'App Count', 'Avg Risk', 'Status'), show='headings')
+        report_win.title('Business Unit Risk Report')
+        tree = ttk.Treeview(report_win, columns=('Business Unit', 'App Count', 'Avg Risk', 'Status'), show='headings')
         for col in tree['columns']:
-            tree.heading(col, text=col)
+            tree.heading(col, text=col, command=lambda c=col: self.report_sort_table(tree, c, False))
         tree.pack(fill='both', expand=True)
         conn = database.sqlite3.connect(database.DB_NAME)
         c = conn.cursor()
-        # Aggregate by department using many-to-many relationship
-        c.execute('''SELECT d.name, COUNT(ad.app_id), AVG(a.risk_score)
-                     FROM departments d
-                     LEFT JOIN application_departments ad ON d.id = ad.dept_id
-                     LEFT JOIN applications a ON ad.app_id = a.id
-                     GROUP BY d.id''')
-        for dept, count, avg_risk in c.fetchall():
+        # Aggregate by business unit using the correct business_units relationship
+        c.execute('''SELECT bu.name, COUNT(abu.app_id), AVG(a.risk_score)
+                     FROM business_units bu
+                     LEFT JOIN application_business_units abu ON bu.id = abu.unit_id
+                     LEFT JOIN applications a ON abu.app_id = a.id
+                     GROUP BY bu.id''')
+        for bu_name, count, avg_risk in c.fetchall():
             if avg_risk is None:
                 status = 'No Data'
                 color = 'white'
-            elif avg_risk > 50:
+            elif avg_risk > 8:  # Adjusted threshold to match risk_color function
                 status = 'Critical'
                 color = '#ffcccc'
-            elif avg_risk > 30:
+            elif avg_risk > 4:  # Adjusted threshold to match risk_color function
                 status = 'Warning'
                 color = '#fff2cc'
             else:
                 status = 'Safe'
                 color = '#ccffcc'
-            tree.insert('', 'end', values=(dept, count, f'{avg_risk:.1f}' if avg_risk else '0', status), tags=(status,))
+            tree.insert('', 'end', values=(bu_name, count, f'{avg_risk:.1f}' if avg_risk else '0', status), tags=(status,))
             tree.tag_configure(status, background=color)
+            
+        # Add styling to the report tree
+        tree_style = ttk.Style()
+        tree_style.configure('Treeview', rowheight=28, font=('Segoe UI', 9))
+        tree_style.configure('Treeview.Heading', font=('Segoe UI', 10, 'bold'))
+        
+        # Add a scrollbar to the report window
+        vsb = ttk.Scrollbar(report_win, orient='vertical', command=tree.yview)
+        tree.configure(yscrollcommand=vsb.set)
+        tree.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+        
         conn.close()
 
     def manage_departments_popup(self):
@@ -173,8 +234,8 @@ class AppTracker(tk.Tk):
             conn = database.sqlite3.connect(database.DB_NAME)
             c = conn.cursor()
             for dept_id in to_delete:
-                c.execute('DELETE FROM application_departments WHERE dept_id = ?', (dept_id,))
-                c.execute('DELETE FROM departments WHERE id = ?', (dept_id,))
+                c.execute('DELETE FROM application_business_units WHERE unit_id = ?', (dept_id,))
+                c.execute('DELETE FROM business_units WHERE id = ?', (dept_id,))
             conn.commit()
             conn.close()
             # Update department_listbox and filter_combo after deletion
@@ -244,6 +305,17 @@ class AppTracker(tk.Tk):
         self.vendor_entry.grid(row=10, column=1, sticky='ew', padx=padx, pady=pady)
 
         ttk.Label(form_frame, text='Business Unit').grid(row=11, column=0, sticky='nw', padx=padx, pady=pady)
+        
+        # Create a frame to hold both buttons vertically
+        buttons_frame = ttk.Frame(form_frame)
+        buttons_frame.grid(row=11, column=0, sticky='nw', padx=padx, pady=(40,0))
+        
+        # Add Business Unit button - with left alignment (anchor='w')
+        ttk.Button(buttons_frame, text='Add Business Unit', command=self.add_department_popup, style='Primary.TButton').pack(pady=5, anchor='w', fill='x')
+        
+        # Manage Business Units button
+        ttk.Button(buttons_frame, text='Manage Business Units', command=self.manage_departments_popup, style='Primary.TButton').pack(pady=5)
+        
         dept_frame = ttk.Frame(form_frame)
         dept_frame.grid(row=11, column=1, sticky='nsew', padx=padx, pady=pady)
         
@@ -265,20 +337,27 @@ class AppTracker(tk.Tk):
         dept_frame.grid_configure(pady=(pady, pady*2))  # Add extra padding below
         dept_frame.pack_propagate(False)
 
-        ttk.Button(form_frame, text='Add Business Unit', command=self.add_department_popup, style='Primary.TButton').grid(row=12, column=0, padx=padx, pady=pady)
-        ttk.Button(form_frame, text='Manage Business Units', command=self.manage_departments_popup, style='Secondary.TButton').grid(row=12, column=1, padx=padx, pady=pady)
-
+        # Add Application button (now in row 13 since we removed the separate Manage Business Units button)
         ttk.Button(form_frame, text='Add Application', command=self.add_application, style='Primary.TButton').grid(row=13, column=0, columnspan=2, sticky='ew', pady=(12,6), padx=padx)
-        ttk.Button(form_frame, text='Purge Database', command=self.purge_database_gui, style='Danger.TButton').grid(row=14, column=0, columnspan=2, sticky='ew', padx=padx)
 
-        # Add 'Create Note' and 'Save Note' buttons to the top right of the 'Save Changes' button
+        # Create a frame for top-right buttons
+        top_buttons_frame = ttk.Frame(right_frame)
+        top_buttons_frame.pack(side='top', fill='x', pady=6)
+        
+        # Edit Selected and Save Changes buttons at the top with Primary style
+        ttk.Button(top_buttons_frame, text='Edit Selected', command=self.load_selected_for_edit, style='Primary.TButton').pack(side='left', padx=6)
+        ttk.Button(top_buttons_frame, text='Save Changes', command=self.save_edit, style='Primary.TButton').pack(side='left', padx=6)
+        
+        # Move 'Purge Database' button to the top right-hand side of the screen
+        purge_button = ttk.Button(top_buttons_frame, text='Purge Database', command=self.purge_database_gui, style='Danger.TButton')
+        purge_button.pack(side='right', padx=6)
+        
+        # Create Note and Save Note buttons in a separate frame below
         edit_frame = ttk.Frame(right_frame)
         edit_frame.pack(fill='x', pady=(0,6))
-        ttk.Button(edit_frame, text='Edit Selected', command=self.load_selected_for_edit, style='Secondary.TButton').pack(side='left', padx=6)
-        ttk.Button(edit_frame, text='Save Changes', command=self.save_edit, style='Primary.TButton').pack(side='left', padx=6)
-        ttk.Button(edit_frame, text='Create Note', command=self.create_note, style='Secondary.TButton').pack(side='left', padx=6)
-        ttk.Button(edit_frame, text='Save Note', command=self.save_notes, style='Primary.TButton').pack(side='left', padx=6)
-        # Add 'Delete Selected' button after 'Save Changes' button
+        ttk.Button(edit_frame, text='Create Note', command=self.create_note, style='Success.TButton').pack(side='left', padx=6)
+        ttk.Button(edit_frame, text='Save Note', command=self.save_notes, style='Success.TButton').pack(side='left', padx=6)
+        # Add 'Delete Selected' button 
         ttk.Button(edit_frame, text='Delete Selected', command=self.delete_selected_app, style='Danger.TButton').pack(side='left', padx=6)
 
         # Right frame: filter + table
@@ -299,24 +378,32 @@ class AppTracker(tk.Tk):
             columns=(
                 'Name', 'Vendor', 'Stability', 'Need', 'Criticality', 'Installed',
                 'DisasterRecovery', 'Safety', 'Security', 'Monetary', 'CustomerService',
-                'Departments', 'Risk', 'Last Modified'
+                'Business Unit', 'Risk', 'Last Modified'
             ),
             show='headings'
         )
-        # column sizing: choose sensible base widths and allow stretching
+        # column sizing: adjusted widths to ensure text fits better in cells
         cols = list(self.tree['columns'])
         base_widths = {
-            'Name': 220, 'Vendor': 160, 'Stability': 80, 'Need': 80, 'Criticality': 80,
-            'Installed': 80, 'DisasterRecovery': 120, 'Safety': 80, 'Security': 80,
-            'Monetary': 80, 'CustomerService': 120, 'Departments': 160, 'Risk': 100, 'Last Modified': 150
+            'Name': 220, 'Vendor': 160, 'Stability': 80, 'Need': 80, 'Criticality': 90,
+            'Installed': 80, 'DisasterRecovery': 100, 'Safety': 80, 'Security': 80,
+            'Monetary': 80, 'CustomerService': 140, 'Business Unit': 180, 'Risk': 120, 'Last Modified': 150
         }
-        # apply initial widths and make columns stretchable
+        # apply initial widths and make columns stretchable with improved text display
         for col in cols:
             w = base_widths.get(col, 100)
-            anchor = 'w' if col in ('Name', 'Vendor', 'Departments') else 'center'
-            heading_text = 'DR' if col == 'DisasterRecovery' else col
-            self.tree.heading(col, text=heading_text, command=lambda _col=col: self.sort_table(_col, False))
-            self.tree.column(col, width=w, anchor=anchor, stretch=True)
+            # Left-align text columns, center-align numeric columns
+            anchor = 'w' if col in ('Name', 'Vendor', 'Business Unit') else 'center'
+            # Use abbreviations for wider column names to help with spacing
+            if col == 'DisasterRecovery':
+                heading_text = 'DR'
+            elif col == 'CustomerService':
+                heading_text = 'Cust Service'
+            else:
+                heading_text = col
+            # Fixed command lambda to properly capture column variable
+            self.tree.heading(col, text=heading_text, command=lambda c=col: self.sort_table(c, False))
+            self.tree.column(col, width=w, anchor=anchor, stretch=True, minwidth=w)
 
         # vertical scrollbar only; horizontal scrolling removed to keep table fit
         vsb = ttk.Scrollbar(table_frame, orient='vertical', command=self.tree.yview)
@@ -401,6 +488,14 @@ class AppTracker(tk.Tk):
         # update db
         database.update_application(app_id, fields)
         self.refresh_table()
+        
+        # Clear form fields after saving
+        self.name_entry.delete(0, 'end')
+        self.vendor_entry.delete(0, 'end')
+        for entry in self.factor_entries.values():
+            entry.delete(0, 'end')
+        self.department_listbox.selection_clear(0, tk.END)
+        
         messagebox.showinfo('Saved', 'Changes saved.')
 
     def add_application(self):
@@ -454,8 +549,8 @@ class AppTracker(tk.Tk):
                 app_id = c.lastrowid
                 app_ids.append(app_id)
                 
-                # Create department link for this application
-                c.execute('INSERT INTO application_departments (app_id, dept_id) VALUES (?, ?)', 
+                # Create business unit link for this application
+                c.execute('INSERT INTO application_business_units (app_id, unit_id) VALUES (?, ?)', 
                          (app_id, dept_id))
             
             conn.commit()
@@ -583,38 +678,101 @@ class AppTracker(tk.Tk):
             return
         try:
             notes_text = self.details_text.get('1.0', 'end').strip()
+            app_id = self.selected_app_id  # Store the app_id before refresh
+            
             # Update notes via database helper
-            database.update_application(self.selected_app_id, {'notes': notes_text})
+            database.update_application(app_id, {'notes': notes_text})
+            
             # Make read-only again
             self.details_text.configure(state='disabled')
+            
             # Refresh table to reflect last_modified change
             self.refresh_table()
+            
+            # Re-select the previously selected application
+            for item in self.tree.get_children():
+                if int(item) == app_id:
+                    self.tree.selection_set(item)
+                    self.tree.see(item)  # Ensure the selected item is visible
+                    break
+                    
             messagebox.showinfo('Saved', 'Notes saved.')
-        except Exception:
-            messagebox.showerror('Error', 'Failed to save notes.')
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to save notes: {e}')
 
     def sort_table(self, col, reverse):
         # Sort the table by the given column
         try:
+            # Store current selection to restore after sorting
+            current_selection = self.tree.selection()
+            selected_ids = [int(item) for item in current_selection] if current_selection else []
+            
+            # Get data for sorting
             data = [(self.tree.set(k, col), k) for k in self.tree.get_children('')]
+            
+            # Sort the data based on appropriate type conversion
             data.sort(reverse=reverse, key=lambda t: self._convert_sort_value(t[0]))
-
+            
+            # Rearrange items in the tree
             for index, (val, k) in enumerate(data):
                 self.tree.move(k, '', index)
-
-            self.tree.heading(col, command=lambda: self.sort_table(col, not reverse))
+            
+            # Update the heading to show sort direction and set command for next sort
+            sort_direction = "▼" if reverse else "▲"  # Down arrow for descending, up for ascending
+            
+            # Get original heading text without any arrows
+            heading_text = self.tree.heading(col, 'text').replace("▲", "").replace("▼", "").strip()
+            
+            # Reset all column headings to remove any previous sort indicators
+            for column in self.tree['columns']:
+                if column != col:  # Skip the column we're currently sorting
+                    current_text = self.tree.heading(column, 'text').replace("▲", "").replace("▼", "").strip()
+                    self.tree.heading(column, text=current_text)
+            
+            # Set new heading with sort indicator
+            self.tree.heading(col, text=f"{heading_text} {sort_direction}", 
+                              command=lambda: self.sort_table(col, not reverse))
+            
+            # Restore selection if there was one
+            if selected_ids:
+                for item in self.tree.get_children():
+                    if int(item) in selected_ids:
+                        self.tree.selection_add(item)
+                        self.tree.see(item)  # Make the first selected item visible
+                        break
+                
         except Exception as e:
             messagebox.showerror('Error', f'Failed to sort table: {e}')
 
     def _convert_sort_value(self, value):
         # Helper to convert values for sorting (e.g., numeric, date, or string)
+        if not value:
+            return ""  # Empty values sort first
+            
+        # Handle risk score format like "8 (High)"
+        if isinstance(value, str) and "(" in value and ")" in value:
+            try:
+                # Extract the numeric part before the parentheses
+                numeric_part = value.split('(')[0].strip()
+                return float(numeric_part)
+            except ValueError:
+                pass
+        
+        # Try to convert to number
         try:
             return float(value)
         except ValueError:
-            try:
+            pass
+            
+        # Try to convert to date
+        try:
+            if isinstance(value, str) and '-' in value:
                 return datetime.fromisoformat(value)
-            except ValueError:
-                return value.lower() if isinstance(value, str) else value
+        except ValueError:
+            pass
+            
+        # Default: return lowercase string for case-insensitive sorting
+        return value.lower() if isinstance(value, str) else value
 
     def refresh_departments(self):
         # Refresh the department listbox with current data

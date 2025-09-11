@@ -137,16 +137,16 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL UNIQUE
     )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS departments (
+    c.execute('''CREATE TABLE IF NOT EXISTS business_units (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT NOT NULL UNIQUE
     )''')
-    c.execute('''CREATE TABLE IF NOT EXISTS application_departments (
+    c.execute('''CREATE TABLE IF NOT EXISTS application_business_units (
         app_id INTEGER,
-        dept_id INTEGER,
-        PRIMARY KEY (app_id, dept_id),
+        unit_id INTEGER,
+        PRIMARY KEY (app_id, unit_id),
         FOREIGN KEY(app_id) REFERENCES applications(id),
-        FOREIGN KEY(dept_id) REFERENCES departments(id)
+        FOREIGN KEY(unit_id) REFERENCES business_units(id)
     )''')
     conn.commit()
     conn.close()
@@ -172,14 +172,14 @@ def link_app_to_departments(app_id, dept_ids):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     for dept_id in dept_ids:
-        c.execute('INSERT OR IGNORE INTO application_departments (app_id, dept_id) VALUES (?, ?)', (app_id, dept_id))
+        c.execute('INSERT OR IGNORE INTO application_business_units (app_id, unit_id) VALUES (?, ?)', (app_id, dept_id))
     conn.commit()
     conn.close()
 
 def get_app_departments(app_id):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute('SELECT d.name FROM departments d JOIN application_departments ad ON d.id = ad.dept_id WHERE ad.app_id = ?', (app_id,))
+    c.execute('SELECT d.name FROM business_units d JOIN application_business_units ad ON d.id = ad.unit_id WHERE ad.app_id = ?', (app_id,))
     depts = [row[0] for row in c.fetchall()]
     conn.close()
     return depts
@@ -220,9 +220,9 @@ def update_application(app_id, fields: Dict[str, object]):
 def purge_database():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute('DELETE FROM application_departments')
+    c.execute('DELETE FROM application_business_units')
     c.execute('DELETE FROM applications')
-    c.execute('DELETE FROM departments')
+    c.execute('DELETE FROM business_units')
     c.execute('DELETE FROM users')
     conn.commit()
     conn.close()
