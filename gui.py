@@ -324,7 +324,7 @@ class AppTracker(tk.Tk):
         
         # Create the first tab - Application Risk Assessment
         self.tab_risk = ttk.Frame(self.tab_control, style='TFrame')
-        self.tab_control.add(self.tab_risk, text="Application Risk Assessment")
+        self.tab_control.add(self.tab_risk, text="System Risk Assessment")
         
         # Create a second tab as a placeholder
         self.tab_reports = ttk.Frame(self.tab_control, style='TFrame')
@@ -351,18 +351,18 @@ class AppTracker(tk.Tk):
         paned = ttk.Panedwindow(self.tab_risk, orient='horizontal')
         paned.pack(fill='both', expand=True, padx=16, pady=16)
 
-        form_frame = ttk.Frame(paned, width=360, padding=12)
+        form_frame = ttk.Frame(paned, width=280, padding=10)
         paned.add(form_frame, weight=0)
 
         right_frame = ttk.Frame(paned, padding=12)
         paned.add(right_frame, weight=1)
 
         # Define label style for modern field labels
-        self.form_label_style = {'font': ('Segoe UI', 10, 'bold'), 'fg': ACCENT, 'bg': WIN_BG, 'padx': 10}
+        self.form_label_style = {'font': ('Segoe UI', 10, 'bold'), 'fg': ACCENT, 'bg': WIN_BG, 'padx': 5}
         
         # Form content with consistent padding
-        padx = 8
-        pady = 8
+        padx = 5
+        pady = 6
         # Define category headers style for grouping
         self.category_style = {'font': ('Segoe UI', 11, 'bold'), 'fg': '#333333', 'bg': WIN_BG, 'pady': 5}
 
@@ -371,9 +371,9 @@ class AppTracker(tk.Tk):
         ratings_header.grid(row=0, column=0, sticky='w', pady=(0, 10))
         
         app_name_label = tk.Label(form_frame, text='System', **self.form_label_style)
-        app_name_label.grid(row=1, column=0, sticky='w', padx=padx, pady=pady)
+        app_name_label.grid(row=1, column=0, sticky='e', padx=(padx, 2), pady=pady)
         self.name_entry = ttk.Entry(form_frame)
-        self.name_entry.grid(row=1, column=1, sticky='ew', padx=padx, pady=pady)
+        self.name_entry.grid(row=1, column=1, sticky='ew', padx=(0, padx), pady=pady)
         
         # factor entries with modern styling
         factor_labels = [
@@ -395,19 +395,19 @@ class AppTracker(tk.Tk):
         self.factor_entries = {}
         for label, row in factor_labels:
             factor_label = tk.Label(form_frame, text=label, **self.form_label_style)
-            factor_label.grid(row=row, column=0, sticky='w', padx=padx, pady=pady)
-            entry = ttk.Entry(form_frame, width=12)
-            entry.grid(row=row, column=1, sticky='w', padx=padx, pady=pady)
+            factor_label.grid(row=row, column=0, sticky='e', padx=(padx, 2), pady=pady)
+            entry = ttk.Entry(form_frame, width=10)
+            entry.grid(row=row, column=1, sticky='w', padx=(0, padx), pady=pady)
             self.factor_entries[label] = entry
             
         vendor_label = tk.Label(form_frame, text='Related Vendor', **self.form_label_style)
-        vendor_label.grid(row=11, column=0, sticky='w', padx=padx, pady=pady)
+        vendor_label.grid(row=11, column=0, sticky='e', padx=(padx, 2), pady=pady)
         self.vendor_entry = ttk.Entry(form_frame)
-        self.vendor_entry.grid(row=11, column=1, sticky='ew', padx=padx, pady=pady)
+        self.vendor_entry.grid(row=11, column=1, sticky='ew', padx=(0, padx), pady=pady)
 
         # Create a section header for Business Units - moved to left column
-        bu_header = tk.Label(form_frame, text="Select Business Units", **self.category_style)
-        bu_header.grid(row=12, column=0, sticky='nw', padx=padx, pady=(0, 2))
+        bu_header = tk.Label(form_frame, text="Select Business Units (Select all that apply)", **self.category_style)
+        bu_header.grid(row=12, column=0, columnspan=2, sticky='nw', padx=padx, pady=(0, 2))
         
         # Add a subtle separator - moved to match the header position
         ttk.Separator(form_frame, orient='horizontal').grid(row=12, column=0, columnspan=2, sticky='ew', pady=(25, 5))
@@ -420,18 +420,18 @@ class AppTracker(tk.Tk):
         ttk.Button(buttons_frame, text='Add Business Unit', command=self.add_department_popup, style='Primary.TButton').pack(pady=5, anchor='w', fill='x')
         
         # Manage Business Units button
-        ttk.Button(buttons_frame, text='Manage Business Units', command=self.manage_departments_popup, style='Primary.TButton').pack(pady=5)
+        ttk.Button(buttons_frame, text='Manage Business Units', command=self.manage_departments_popup, style='Primary.TButton').pack(pady=5, fill='x')
         
         dept_frame = ttk.Frame(form_frame)
         dept_frame.grid(row=13, column=1, sticky='nsew', padx=padx, pady=pady)
         
         # Set minimum size for the department frame
         dept_frame.grid_propagate(False)
-        dept_frame.configure(width=300, height=200)  # Set explicit size
+        dept_frame.configure(width=250, height=200)  # Set explicit size
 
         # Create department listbox with white background and increased height
         self.department_listbox = tk.Listbox(dept_frame, selectmode='multiple', exportselection=0, 
-                                           height=15, width=40, bg='white', font=('Segoe UI', 10),
+                                           height=15, width=30, bg='white', font=('Segoe UI', 10),
                                            highlightthickness=1, highlightcolor=ACCENT, borderwidth=1)
         self.department_listbox.pack(side='left', fill='both', expand=True)
 
@@ -439,8 +439,9 @@ class AppTracker(tk.Tk):
         dept_scrollbar.pack(side='right', fill='y')
         self.department_listbox.configure(yscrollcommand=dept_scrollbar.set)
         
-        # Ensure the department frame expands properly
-        form_frame.grid_columnconfigure(1, weight=1)
+        # Ensure the department frame expands properly and configure column widths
+        form_frame.grid_columnconfigure(0, weight=0)  # Label column just enough for content
+        form_frame.grid_columnconfigure(1, weight=1)  # Entry column gets all extra space
         dept_frame.grid_configure(pady=(pady, pady*2))  # Add extra padding below
         dept_frame.pack_propagate(False)
 
@@ -494,14 +495,14 @@ class AppTracker(tk.Tk):
         self.search_entry.config(foreground='gray')
         # Set up focus events for placeholder behavior for combobox
         def on_combobox_click(event):
-            if self.search_entry.get() == "Type to search...":
+            if self.search_entry is not None and self.search_entry.get() == "Type to search...":
                 self.search_entry.delete(0, "end")
                 self.search_entry.config(foreground='black')
             # When the combobox is clicked, update the suggestions
             self.update_search_suggestions()
                 
         def on_combobox_leave(event):
-            if self.search_entry.get() == "":
+            if self.search_entry is not None and self.search_entry.get() == "":
                 self.search_entry.set("")  # Clear first
                 self.search_entry.insert(0, "Type to search...")
                 self.search_entry.config(foreground='gray')
@@ -546,7 +547,7 @@ class AppTracker(tk.Tk):
         self.tree = ttk.Treeview(
             table_frame,
             columns=(
-                'Name', 'Vendor', 'Stability', 'Need', 'Criticality', 'Installed',
+                'System', 'Vendor', 'Stability', 'Need', 'Criticality', 'Installed',
                 'DisasterRecovery', 'Safety', 'Security', 'Monetary', 'CustomerService',
                 'Business Unit', 'Risk', 'Last Modified'
             ),
@@ -555,7 +556,7 @@ class AppTracker(tk.Tk):
         # column sizing: adjusted widths to ensure text fits better in cells
         cols = list(self.tree['columns'])
         base_widths = {
-            'Name': 220, 'Vendor': 160, 'Stability': 80, 'Need': 80, 'Criticality': 90,
+            'System': 220, 'Vendor': 160, 'Stability': 80, 'Need': 80, 'Criticality': 90,
             'Installed': 80, 'DisasterRecovery': 100, 'Safety': 80, 'Security': 80,
             'Monetary': 80, 'CustomerService': 140, 'Business Unit': 180, 'Risk': 80, 'Last Modified': 150
         }
@@ -563,7 +564,7 @@ class AppTracker(tk.Tk):
         for col in cols:
             w = base_widths.get(col, 100)
             # Left-align text columns, center-align numeric columns
-            anchor = 'w' if col in ('Name', 'Vendor', 'Business Unit') else 'center'
+            anchor = 'w' if col in ('System', 'Vendor', 'Business Unit') else 'center'
             # Use abbreviations for wider column names to help with spacing
             if col == 'DisasterRecovery':
                 heading_text = 'DR'
@@ -823,7 +824,7 @@ class AppTracker(tk.Tk):
                     continue
                     
             rows.append((row, app_id, risk_score))
-        # Sort rows by the 'Name' column (index 0)
+        # Sort rows by the 'System' column (index 0)
         rows.sort(key=lambda x: x[0][0].lower())
         for row, app_id, risk_score in rows:
             color = get_risk_color(risk_score)
