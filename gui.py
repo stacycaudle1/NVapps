@@ -366,11 +366,11 @@ class AppTracker(tk.Tk):
         # Define category headers style for grouping
         self.category_style = {'font': ('Segoe UI', 11, 'bold'), 'fg': '#333333', 'bg': WIN_BG, 'pady': 5}
 
-        # Create a category header for Rating Factors - moved above app name label
+        # Create a category header for Rating Factors - moved above system label
         ratings_header = tk.Label(form_frame, text="Rating Factors", **self.category_style)
         ratings_header.grid(row=0, column=0, sticky='w', pady=(0, 10))
         
-        app_name_label = tk.Label(form_frame, text='App Name', **self.form_label_style)
+        app_name_label = tk.Label(form_frame, text='System', **self.form_label_style)
         app_name_label.grid(row=1, column=0, sticky='w', padx=padx, pady=pady)
         self.name_entry = ttk.Entry(form_frame)
         self.name_entry.grid(row=1, column=1, sticky='ew', padx=padx, pady=pady)
