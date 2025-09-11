@@ -518,16 +518,20 @@ class AppTracker(tk.Tk):
         # Initialize the suggestions list
         self.update_search_suggestions()
         
-        # Create search options in a separate row for clarity
+        # Create search options in a separate row for clarity - radio buttons first
         options_frame = ttk.Frame(search_frame)
         options_frame.pack(side='top', fill='x', pady=2)
         
         # Add radio buttons for search type
         self.search_type_var = tk.StringVar(value="Name")
         ttk.Radiobutton(options_frame, text="Name", variable=self.search_type_var, 
-                       value="Name", command=self.update_search_selections).pack(side='left', padx=(25,5))
+                       value="Name", command=self.update_search_selections).pack(side='left', padx=(5,5))
         ttk.Radiobutton(options_frame, text="Business Unit", variable=self.search_type_var, 
                        value="Business Unit", command=self.update_search_selections).pack(side='left', padx=5)
+        
+        # Move search container below the radio buttons
+        search_container.pack_forget()  # Remove the current packing of the search container
+        search_container.pack(side='top', anchor='w', pady=(5, 0), padx=(20, 0))  # Position below and indented
         
         # Add search button and clear button in a nicer layout
         button_frame = ttk.Frame(search_container)
