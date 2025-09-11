@@ -33,6 +33,10 @@ class AppTracker(tk.Tk):
             self.configure(bg=WIN_BG)
         except Exception:
             pass
+        # Initialize search variables
+        self.search_entry = None
+        self.search_type_var = None
+        self.search_after_id = None  # For delayed search
         database.init_db()  # Ensure DB schema is correct before anything else
         self.create_widgets()
         # Populate the department listbox after creating widgets
@@ -60,6 +64,12 @@ class AppTracker(tk.Tk):
                         pass
         except Exception:
             pass
+            
+        # Configure notebook (tabs) styling with blue colors
+        style.configure('TNotebook', background=ACCENT)
+        style.configure('TNotebook.Tab', background=HEADER_BG, foreground='white', padding=[10, 4])
+        # Configure active tab
+        style.map('TNotebook.Tab', background=[('selected', ACCENT)], foreground=[('selected', 'white')])
         default_font = ('Segoe UI', 10)
         # Smaller font for table rows to ensure text fits in cells
         tree_font = ('Segoe UI', 8)
@@ -118,9 +128,7 @@ class AppTracker(tk.Tk):
             self.department_listbox.delete(0, 'end')
             for dept_id, dept_name in self.get_departments():
                 self.department_listbox.insert('end', dept_name)
-            # Also update filter_combo values
-            self.filter_combo['values'] = ['All'] + [d[1] for d in self.get_departments()]
-            self.filter_combo.current(0)
+            # No need to update filter_combo anymore as we're using search functionality
             popup.destroy()
 
         ttk.Button(popup, text='Add', command=add_dept, style='Primary.TButton').pack(padx=10, pady=10)
@@ -247,35 +255,100 @@ class AppTracker(tk.Tk):
                 c.execute('DELETE FROM business_units WHERE id = ?', (dept_id,))
             conn.commit()
             conn.close()
-            # Update department_listbox and filter_combo after deletion
+            # Update department_listbox after deletion
             self.department_listbox.delete(0, 'end')
             for dept_id, dept_name in self.get_departments():
                 self.department_listbox.insert('end', dept_name)
-            self.filter_combo['values'] = ['All'] + [d[1] for d in self.get_departments()]
-            self.filter_combo.current(0)
             popup.destroy()
             self.refresh_table()
 
         ttk.Button(popup, text='Delete Selected', command=delete_selected, style='Danger.TButton').pack(padx=10, pady=10)
 
+    def on_tab_changed(self, event):
+        # Get the selected tab index
+        tab_id = self.tab_control.select()
+        tab_index = self.tab_control.index(tab_id)
+        
+        # Handle tab-specific actions (can be expanded in the future)
+        if tab_index == 0:  # Application Risk Assessment tab
+            # Refresh data when returning to the main tab
+            self.refresh_table()
+        elif tab_index == 1:  # Reports tab
+            # Future functionality for reports tab can be added here
+            pass
+
+    # Placeholder methods are now directly in create_widgets
+            
+    def delayed_search(self):
+        """Perform the search after a short delay to prevent excessive refreshes while typing"""
+        # Cancel any existing delayed search
+        if hasattr(self, 'search_after_id') and self.search_after_id is not None:
+            self.after_cancel(self.search_after_id)
+            self.search_after_id = None
+            
+        # Only search if not showing the placeholder text
+        if hasattr(self, 'search_entry') and self.search_entry is not None:
+            search_text = self.search_entry.get()
+            if search_text != "Type to search...":
+                # Update suggestions as user types
+                self.update_search_suggestions()
+                # Then refresh the table with current search
+                self.refresh_table()
+    
+    def clear_search(self):
+        """Clear the search entry and refresh the table to show all results"""
+        if hasattr(self, 'search_entry') and self.search_entry is not None:
+            self.search_entry.set("")  # For Combobox, use set instead of delete/insert
+            self.search_entry.insert(0, "Type to search...")
+            self.search_entry.config(foreground='gray')
+        self.refresh_table()
+            
     def purge_database_gui(self):
         if messagebox.askyesno('Confirm Purge', 'Are you sure you want to delete ALL data? This cannot be undone.'):
             database.purge_database()
             self.department_listbox.delete(0, 'end')
             for dept_id, dept_name in self.get_departments():
                 self.department_listbox.insert('end', dept_name)
-            self.filter_combo['values'] = ['All'] + [d[1] for d in self.get_departments()]
-            self.filter_combo.current(0)
             self.refresh_table()
             messagebox.showinfo('Purge Complete', 'All data has been deleted.')
 
     def create_widgets(self):
-        # Initialize filter_combo early with a default ttk.Combobox instance
-        self.filter_combo = ttk.Combobox(values=['All'], width=24)
-        self.filter_combo.current(0)
-
-        # use a PanedWindow to separate form and table
-        paned = ttk.Panedwindow(self, orient='horizontal')
+        # No need to initialize filter_combo early anymore as we're using search functionality
+        
+        # Create the tab control
+        self.tab_control = ttk.Notebook(self)
+        self.tab_control.pack(fill='both', expand=True, padx=8, pady=8)
+        
+        # Bind tab change event
+        self.tab_control.bind("<<NotebookTabChanged>>", self.on_tab_changed)
+        
+        # Create the first tab - Application Risk Assessment
+        self.tab_risk = ttk.Frame(self.tab_control, style='TFrame')
+        self.tab_control.add(self.tab_risk, text="Application Risk Assessment")
+        
+        # Create a second tab as a placeholder
+        self.tab_reports = ttk.Frame(self.tab_control, style='TFrame')
+        self.tab_control.add(self.tab_reports, text="Reports")
+        
+        # Create a container for the top section of the Reports tab
+        reports_top_frame = ttk.Frame(self.tab_reports)
+        reports_top_frame.pack(fill='x', pady=10, padx=15)
+        
+        # Add Show Report button to the top left of the Reports tab
+        show_report_btn = ttk.Button(reports_top_frame, text='Show Report', command=self.show_report, style='Primary.TButton')
+        show_report_btn.pack(side='left', padx=0)
+        
+        # Add some placeholder content to the Reports tab
+        reports_label = tk.Label(self.tab_reports, text="Reports Dashboard", 
+                               font=('Segoe UI', 16, 'bold'), fg=ACCENT, bg=WIN_BG)
+        reports_label.pack(pady=20)
+        
+        info_label = tk.Label(self.tab_reports, text="Click 'Show Report' to view the Business Unit Risk Report.",
+                            font=('Segoe UI', 12), fg='#555555', bg=WIN_BG)
+        info_label.pack(pady=10)
+        
+        # use a PanedWindow to separate form and table inside the first tab
+        paned = ttk.Panedwindow(self.tab_risk, orient='horizontal')
         paned.pack(fill='both', expand=True, padx=16, pady=16)
 
         form_frame = ttk.Frame(paned, width=360, padding=12)
@@ -394,20 +467,74 @@ class AppTracker(tk.Tk):
         # Add 'Delete Selected' button 
         ttk.Button(edit_frame, text='Delete Selected', command=self.delete_selected_app, style='Danger.TButton').pack(side='left', padx=6)
 
-        # Right frame: filter + table with modern styling
+        # Right frame: search + filter + table with modern styling
         control_frame = ttk.Frame(right_frame)
         control_frame.pack(fill='x', pady=(0,6))
         
-        # Create a more modern filter label
-        filter_label_style = {'font': ('Segoe UI', 10), 'fg': ACCENT, 'bg': WIN_BG}
-        filter_label = tk.Label(control_frame, text='Filter by Business Unit:', **filter_label_style)
-        filter_label.pack(side='left', padx=(0,6))
+        # Create an improved search frame with better layout
+        search_frame = ttk.Frame(control_frame)
+        search_frame.pack(side='left', fill='x', expand=True)
         
-        self.filter_combo = ttk.Combobox(control_frame, values=['All'] + [d[1] for d in self.get_departments()], width=24)
-        self.filter_combo.current(0)
-        self.filter_combo.pack(side='left')
-        ttk.Button(control_frame, text='Apply Filter', command=self.refresh_table, style='Secondary.TButton').pack(side='left', padx=6)
-        ttk.Button(control_frame, text='Show Report', command=self.show_report, style='Primary.TButton').pack(side='left', padx=6)
+        filter_label_style = {'font': ('Segoe UI', 10), 'fg': ACCENT, 'bg': WIN_BG}
+        
+        # Create search bar with icon-like prefix
+        search_container = ttk.Frame(search_frame)
+        search_container.pack(side='top', fill='x', pady=2)
+        
+        search_icon = tk.Label(search_container, text="🔍", font=('Segoe UI', 12), bg=WIN_BG)
+        search_icon.pack(side='left', padx=(0,2))
+        
+        search_label = tk.Label(search_container, text='Quick Search:', **filter_label_style)
+        search_label.pack(side='left', padx=(0,6))
+        
+        # Create search as a combobox with autocomplete
+        self.search_entry = ttk.Combobox(search_container, width=20)
+        self.search_entry.pack(side='left', padx=(0,6))
+        self.search_entry.insert(0, "Type to search...")
+        self.search_entry.config(foreground='gray')
+        # Set up focus events for placeholder behavior for combobox
+        def on_combobox_click(event):
+            if self.search_entry.get() == "Type to search...":
+                self.search_entry.delete(0, "end")
+                self.search_entry.config(foreground='black')
+            # When the combobox is clicked, update the suggestions
+            self.update_search_suggestions()
+                
+        def on_combobox_leave(event):
+            if self.search_entry.get() == "":
+                self.search_entry.set("")  # Clear first
+                self.search_entry.insert(0, "Type to search...")
+                self.search_entry.config(foreground='gray')
+                
+        self.search_entry.bind("<FocusIn>", on_combobox_click)
+        self.search_entry.bind("<FocusOut>", on_combobox_leave)
+        
+        # Bind selection event to trigger search immediately
+        self.search_entry.bind("<<ComboboxSelected>>", lambda event: self.refresh_table())
+        
+        # Bind key release event to trigger search with small delay
+        self.search_entry.bind("<KeyRelease>", lambda event: self.after(300, self.delayed_search))
+        
+        # Initialize the suggestions list
+        self.update_search_suggestions()
+        
+        # Create search options in a separate row for clarity
+        options_frame = ttk.Frame(search_frame)
+        options_frame.pack(side='top', fill='x', pady=2)
+        
+        # Add radio buttons for search type
+        self.search_type_var = tk.StringVar(value="Name")
+        ttk.Radiobutton(options_frame, text="Name", variable=self.search_type_var, 
+                       value="Name", command=self.update_search_selections).pack(side='left', padx=(25,5))
+        ttk.Radiobutton(options_frame, text="Business Unit", variable=self.search_type_var, 
+                       value="Business Unit", command=self.update_search_selections).pack(side='left', padx=5)
+        
+        # Add search button and clear button in a nicer layout
+        button_frame = ttk.Frame(search_container)
+        button_frame.pack(side='right', padx=(6,0))
+        
+        ttk.Button(search_container, text='Clear', command=self.clear_search, 
+                 style='Secondary.TButton').pack(side='right', padx=(6,0))
 
         # table area with vertical and horizontal scrollbars
         table_frame = ttk.Frame(right_frame)
@@ -426,7 +553,7 @@ class AppTracker(tk.Tk):
         base_widths = {
             'Name': 220, 'Vendor': 160, 'Stability': 80, 'Need': 80, 'Criticality': 90,
             'Installed': 80, 'DisasterRecovery': 100, 'Safety': 80, 'Security': 80,
-            'Monetary': 80, 'CustomerService': 140, 'Business Unit': 180, 'Risk': 120, 'Last Modified': 150
+            'Monetary': 80, 'CustomerService': 140, 'Business Unit': 180, 'Risk': 80, 'Last Modified': 150
         }
         # apply initial widths and make columns stretchable with improved text display
         for col in cols:
@@ -610,14 +737,53 @@ class AppTracker(tk.Tk):
         self.department_listbox.selection_clear(0, tk.END)
         self.refresh_table()
 
+    def update_search_selections(self):
+        """Handle search type change and update dropdown values"""
+        self.update_search_suggestions()
+        self.refresh_table()
+        
+    def update_search_suggestions(self, event=None):
+        """Update the dropdown suggestions based on the search type selected"""
+        if not hasattr(self, 'search_entry') or self.search_entry is None:
+            return
+            
+        search_type = "Name"
+        if hasattr(self, 'search_type_var') and self.search_type_var is not None:
+            search_type = self.search_type_var.get()
+            
+        # Get appropriate values from the database
+        conn = database.sqlite3.connect(database.DB_NAME)
+        c = conn.cursor()
+        
+        if search_type == "Name":
+            c.execute("SELECT DISTINCT name FROM applications ORDER BY name")
+            values = [row[0] for row in c.fetchall()]
+        else:  # Business Unit
+            c.execute("SELECT DISTINCT name FROM business_units ORDER BY name")
+            values = [row[0] for row in c.fetchall()]
+            
+        conn.close()
+        
+        # Update the combobox values
+        self.search_entry['values'] = values
+    
     def refresh_table(self):
         for row in self.tree.get_children():
             self.tree.delete(row)
         conn = database.sqlite3.connect(database.DB_NAME)
         c = conn.cursor()
-        filter_dept = None
-        if hasattr(self, 'filter_combo'):
-            filter_dept = self.filter_combo.get()
+        
+        # Get search parameters if available
+        search_text = ""
+        search_type = "Name"
+        if hasattr(self, 'search_entry') and self.search_entry is not None:
+            entered_text = self.search_entry.get().strip().lower()
+            # Don't search if the placeholder text is showing
+            if entered_text != "type to search...":
+                search_text = entered_text
+        if hasattr(self, 'search_type_var') and self.search_type_var is not None:
+            search_type = self.search_type_var.get()
+            
         c.execute('''SELECT id, name, vendor, stability, need, criticality, installed, disasterrecovery, safety, security, monetary, customerservice, last_modified FROM applications''')
         rows = []
         for app_row in c.fetchall():
@@ -644,8 +810,14 @@ class AppTracker(tk.Tk):
             row = (
                 app_row[1], app_row[2], app_row[3], app_row[4], app_row[5], app_row[6], app_row[7], app_row[8], app_row[9], app_row[10], app_row[11], dept_str, f"{risk_score} ({risk_level})", last_mod_display
             )
-            if filter_dept and filter_dept != 'All' and filter_dept not in depts:
-                continue
+            
+            # Apply search filtering
+            if search_text:
+                if search_type == "Name" and search_text.lower() not in app_row[1].lower():
+                    continue
+                elif search_type == "Business Unit" and not any(search_text.lower() in dept.lower() for dept in depts):
+                    continue
+                    
             rows.append((row, app_id, risk_score))
         # Sort rows by the 'Name' column (index 0)
         rows.sort(key=lambda x: x[0][0].lower())
