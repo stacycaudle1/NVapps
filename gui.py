@@ -2,6 +2,9 @@ import tkinter as tk
 from tkinter import ttk, messagebox
 from datetime import datetime
 import database
+import matplotlib.pyplot as plt
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import pandas as pd
 
 # Color palette
 ACCENT = '#0078d4'       # primary accent (blue)
@@ -179,22 +182,136 @@ class AppTracker(tk.Tk):
         # Default: return lowercase string for case-insensitive sorting
         return value.lower() if isinstance(value, str) else value
     
+    def update_criticality_chart(self, chart_frame, sort_by):
+        """Update the criticality chart based on the selected sorting option"""
+        # Clear existing chart
+        for widget in chart_frame.winfo_children():
+            widget.destroy()
+            
+        # Get system data from database
+        conn = database.sqlite3.connect(database.DB_NAME)
+        c = conn.cursor()
+        c.execute('''SELECT name, criticality, risk_score 
+                     FROM applications 
+                     ORDER BY name''')
+        data = c.fetchall()
+        conn.close()
+        
+        if not data:
+            # Show a message if no data is available
+            msg = tk.Label(chart_frame, text="No system data available", 
+                         font=('Segoe UI', 12), fg='gray')
+            msg.pack(expand=True)
+            return
+            
+        # Convert to DataFrame for easier manipulation
+        df = pd.DataFrame(data, columns=['System', 'Criticality', 'Risk'])
+        
+        # Sort based on selected option
+        if sort_by == "Criticality":
+            df = df.sort_values('Criticality', ascending=False)
+        elif sort_by == "Risk Score":
+            df = df.sort_values('Risk', ascending=False)
+        else:  # System Name
+            df = df.sort_values('System')
+            
+        # Create the matplotlib figure
+        fig, ax = plt.subplots(figsize=(12, 6))
+        bars = ax.bar(range(len(df)), df['Criticality'])
+        
+        # Customize the chart
+        ax.set_title('System Criticality Comparison', fontsize=12, pad=15)
+        ax.set_xlabel('Systems', fontsize=10)
+        ax.set_ylabel('Criticality Score', fontsize=10)
+        
+        # Add system names as x-tick labels
+        plt.xticks(range(len(df)), df['System'].tolist(), rotation=45, ha='right')
+        
+        # Color the bars based on criticality score
+        for bar, score in zip(bars, df['Criticality']):
+            if score >= 8:
+                bar.set_color('#ff9999')  # Light red
+            elif score >= 4:
+                bar.set_color('#ffcc99')  # Light orange
+            else:
+                bar.set_color('#99cc99')  # Light green
+        
+        # Add value labels on top of bars
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width()/2., height,
+                   f'{height:.1f}', ha='center', va='bottom')
+        
+        # Adjust layout to prevent label cutoff
+        plt.tight_layout()
+        
+        # Create canvas and embed in frame
+        canvas = FigureCanvasTkAgg(fig, master=chart_frame)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill='both', expand=True)
+        
+        # Close the figure to free memory
+        plt.close(fig)
+    
     def show_report(self):
         report_win = tk.Toplevel(self)
-        report_win.title('Business Unit Risk Report')
+        report_win.title('System Reports')
         report_win.configure(bg=WIN_BG)
+        report_win.geometry('1200x800')
         
-        # Add a modern header to the report
-        header_frame = tk.Frame(report_win, bg=WIN_BG)
-        header_frame.pack(fill='x', pady=(10, 15))
-        header_label = tk.Label(header_frame, text='Business Unit Risk Overview', 
-                              font=('Segoe UI', 14, 'bold'), fg=ACCENT, bg=WIN_BG)
-        header_label.pack(side='left', padx=15)
+        # Create a notebook for different report tabs
+        notebook = ttk.Notebook(report_win)
+        notebook.pack(fill='both', expand=True, padx=10, pady=10)
         
-        tree = ttk.Treeview(report_win, columns=('Business Unit', 'App Count', 'Avg Risk', 'Status'), show='headings')
-        for col in tree['columns']:
-            tree.heading(col, text=col, command=lambda c=col: self.report_sort_table(tree, c, False))
-        tree.pack(fill='both', expand=True, padx=15, pady=(0, 15))
+        # Business Unit Risk Tab
+        bu_frame = ttk.Frame(notebook)
+        notebook.add(bu_frame, text='Business Unit Risk')
+        
+        # Add a modern header to the business unit report
+        bu_header = tk.Frame(bu_frame, bg=WIN_BG)
+        bu_header.pack(fill='x', pady=(10, 15))
+        bu_label = tk.Label(bu_header, text='Business Unit Risk Overview', 
+                          font=('Segoe UI', 14, 'bold'), fg=ACCENT, bg=WIN_BG)
+        bu_label.pack(side='left', padx=15)
+        
+        # Business Unit Risk Tree
+        bu_tree = ttk.Treeview(bu_frame, columns=('Business Unit', 'App Count', 'Avg Risk', 'Status'), show='headings')
+        for col in bu_tree['columns']:
+            bu_tree.heading(col, text=col, command=lambda c=col: self.report_sort_table(bu_tree, c, False))
+        bu_tree.pack(fill='both', expand=True, padx=15, pady=(0, 15))
+        
+        # System Criticality Tab
+        crit_frame = ttk.Frame(notebook)
+        notebook.add(crit_frame, text='System Criticality')
+        
+        # Add header to criticality report
+        crit_header = tk.Frame(crit_frame, bg=WIN_BG)
+        crit_header.pack(fill='x', pady=(10, 15))
+        crit_label = tk.Label(crit_header, text='System Criticality Overview', 
+                            font=('Segoe UI', 14, 'bold'), fg=ACCENT, bg=WIN_BG)
+        crit_label.pack(side='left', padx=15)
+        
+        # Controls frame for criticality visualization
+        controls_frame = ttk.Frame(crit_frame)
+        controls_frame.pack(fill='x', padx=15, pady=5)
+        
+        # Sort options
+        ttk.Label(controls_frame, text="Sort by:").pack(side='left', padx=5)
+        sort_var = tk.StringVar(value="Criticality")
+        sort_options = ttk.Combobox(controls_frame, textvariable=sort_var, values=["Criticality", "Risk Score", "System Name"])
+        sort_options.pack(side='left', padx=5)
+        
+        # Button to refresh visualization
+        refresh_btn = ttk.Button(controls_frame, text="Refresh", 
+                               command=lambda: self.update_criticality_chart(chart_frame, sort_var.get()),
+                               style='Primary.TButton')
+        refresh_btn.pack(side='left', padx=5)
+        
+        # Frame for matplotlib chart
+        chart_frame = ttk.Frame(crit_frame)
+        chart_frame.pack(fill='both', expand=True, padx=15, pady=5)
+        
+        # Populate business unit data
         conn = database.sqlite3.connect(database.DB_NAME)
         c = conn.cursor()
         # Aggregate by business unit using the correct business_units relationship
@@ -216,19 +333,22 @@ class AppTracker(tk.Tk):
             else:
                 status = 'Safe'
                 color = '#ccffcc'
-            tree.insert('', 'end', values=(bu_name, count, f'{avg_risk:.1f}' if avg_risk else '0', status), tags=(status,))
-            tree.tag_configure(status, background=color)
+            bu_tree.insert('', 'end', values=(bu_name, count, f'{avg_risk:.1f}' if avg_risk else '0', status), tags=(status,))
+            bu_tree.tag_configure(status, background=color)
             
         # Add styling to the report tree
         tree_style = ttk.Style()
         tree_style.configure('Treeview', rowheight=28, font=('Segoe UI', 9))
         tree_style.configure('Treeview.Heading', font=('Segoe UI', 10, 'bold'))
         
-        # Add a scrollbar to the report window
-        vsb = ttk.Scrollbar(report_win, orient='vertical', command=tree.yview)
-        tree.configure(yscrollcommand=vsb.set)
-        tree.pack(side='left', fill='both', expand=True)
-        vsb.pack(side='right', fill='y')
+        # Add a scrollbar to the business unit tree
+        bu_vsb = ttk.Scrollbar(bu_frame, orient='vertical', command=bu_tree.yview)
+        bu_tree.configure(yscrollcommand=bu_vsb.set)
+        bu_tree.pack(side='left', fill='both', expand=True)
+        bu_vsb.pack(side='right', fill='y')
+        
+        # Create initial criticality chart
+        self.update_criticality_chart(chart_frame, sort_var.get())
         
         conn.close()
 
@@ -541,9 +661,18 @@ class AppTracker(tk.Tk):
         ttk.Button(search_container, text='Clear', command=self.clear_search, 
                  style='Secondary.TButton').pack(side='right', padx=(6,0))
 
-        # table area with vertical and horizontal scrollbars
-        table_frame = ttk.Frame(right_frame)
-        table_frame.pack(fill='both', expand=True)
+        # Create main tables container
+        tables_container = ttk.Frame(right_frame)
+        tables_container.pack(fill='both', expand=True)
+        
+        # Main systems table area (top half)
+        table_frame = ttk.Frame(tables_container)
+        table_frame.pack(fill='both', expand=True, side='top')
+        
+        # Main systems table title
+        systems_title = ttk.Label(table_frame, text="Systems", font=('Segoe UI', 11, 'bold'))
+        systems_title.grid(row=0, column=0, sticky='w', padx=5, pady=(0, 5))
+        
         self.tree = ttk.Treeview(
             table_frame,
             columns=(
@@ -576,26 +705,98 @@ class AppTracker(tk.Tk):
             self.tree.heading(col, text=heading_text, command=lambda c=col: self.sort_table(c, False))
             self.tree.column(col, width=w, anchor=anchor, stretch=True, minwidth=w)
 
-        # vertical scrollbar only; horizontal scrolling removed to keep table fit
+        # vertical scrollbar for main systems table
         vsb = ttk.Scrollbar(table_frame, orient='vertical', command=self.tree.yview)
         self.tree.configure(yscrollcommand=vsb.set)
-        self.tree.grid(row=0, column=0, sticky='nsew')
-        vsb.grid(row=0, column=1, sticky='ns')
-        table_frame.rowconfigure(0, weight=1)
+        self.tree.grid(row=1, column=0, sticky='nsew')
+        vsb.grid(row=1, column=1, sticky='ns')
+        table_frame.rowconfigure(1, weight=1)
         table_frame.columnconfigure(0, weight=1)
-
-        # Details area below the table: read-only Text widget showing selected row details
-        details_text = tk.Text(table_frame, wrap='word', height=6, width=80)
-        details_vsb = ttk.Scrollbar(table_frame, orient='vertical', command=details_text.yview)
+        
+        # Sub-systems/Integrations table area (bottom half)
+        integrations_frame = ttk.Frame(tables_container)
+        integrations_frame.pack(fill='both', expand=True, side='bottom', pady=(10, 0))
+        
+        # Create a frame for integration controls
+        integration_controls = ttk.Frame(integrations_frame)
+        integration_controls.grid(row=0, column=0, sticky='ew', padx=5, pady=(0, 5))
+        
+        # Integrations title and add button
+        self.integrations_title = ttk.Label(integration_controls, text="System Sub/Integrations", font=('Segoe UI', 11, 'bold'))
+        self.integrations_title.pack(side='left')
+        
+        # Add and Delete integration buttons
+        delete_integration_btn = ttk.Button(integration_controls, text="Delete Integration", 
+                                         command=self.delete_selected_integration, style='Danger.TButton')
+        delete_integration_btn.pack(side='right', padx=5)
+        
+        add_integration_btn = ttk.Button(integration_controls, text="Add Integration", 
+                                      command=self.add_system_integration, style='Primary.TButton')
+        add_integration_btn.pack(side='right', padx=5)
+        
+        # Create the integrations table with same columns but adjusted for integrations
+        self.integrations_tree = ttk.Treeview(
+            integrations_frame,
+            columns=(
+                'Name', 'Vendor', 'Stability', 'Need', 'Criticality', 'Installed',
+                'DR', 'Safety', 'Security', 'Monetary', 'CustomerService',
+                'Risk', 'Last Modified'
+            ),
+            show='headings'
+        )
+        
+        # Apply column settings to integrations table
+        int_cols = list(self.integrations_tree['columns'])
+        col_widths = {
+            'Name': 220, 'Vendor': 160, 'Stability': 80, 'Need': 80, 'Criticality': 90,
+            'Installed': 80, 'DR': 80, 'Safety': 80, 'Security': 80,
+            'Monetary': 80, 'CustomerService': 140, 'Risk': 80, 'Last Modified': 150
+        }
+        
+        for col in int_cols:
+            w = col_widths.get(col, 100)
+            # Left-align text columns, center-align numeric columns
+            anchor = 'w' if col in ('Name', 'Vendor') else 'center'
+            # Use consistent column names
+            heading_text = 'Cust Service' if col == 'CustomerService' else col
+            self.integrations_tree.heading(col, text=heading_text, 
+                                        command=lambda c=col: self.sort_integration_table(c, False))
+            self.integrations_tree.column(col, width=w, anchor=anchor, stretch=True, minwidth=w)
+        
+        # Vertical scrollbar for integrations table
+        int_vsb = ttk.Scrollbar(integrations_frame, orient='vertical', command=self.integrations_tree.yview)
+        self.integrations_tree.configure(yscrollcommand=int_vsb.set)
+        self.integrations_tree.grid(row=1, column=0, sticky='nsew')
+        int_vsb.grid(row=1, column=1, sticky='ns')
+        integrations_frame.rowconfigure(1, weight=1)
+        integrations_frame.columnconfigure(0, weight=1)
+        
+        # Make both tables the same height
+        tables_container.update_idletasks()
+        
+        # Details area below the tables: read-only Text widget showing selected row details
+        details_frame = ttk.Frame(right_frame)
+        details_frame.pack(fill='x', expand=False, pady=(10, 0))
+        
+        details_text = tk.Text(details_frame, wrap='word', height=6, width=80)
+        details_vsb = ttk.Scrollbar(details_frame, orient='vertical', command=details_text.yview)
         details_text.configure(yscrollcommand=details_vsb.set, state='disabled')
-        details_text.grid(row=1, column=0, sticky='nsew', pady=(6,0))
-        details_vsb.grid(row=1, column=1, sticky='ns', pady=(6,0))
-        table_frame.rowconfigure(1, weight=0)
+        details_text.pack(side='left', fill='both', expand=True)
+        details_vsb.pack(side='right', fill='y')
+        
         # expose as attribute so handlers can update it
         self.details_text = details_text
+        
+        # Store the current parent system ID for integration operations
+        self.current_parent_system_id = None
 
         # populate details area when a row is selected
         self.tree.bind('<<TreeviewSelect>>', self.on_tree_select)
+        self.integrations_tree.bind('<<TreeviewSelect>>', self.on_integration_select)
+        
+        # Double click on integration to edit it
+        self.integrations_tree.bind('<Double-1>', self.on_integration_double_click)
+        
 
 
     def load_selected_for_edit(self):
@@ -836,27 +1037,46 @@ class AppTracker(tk.Tk):
         conn.close()
 
     def on_tree_select(self, event):
-        # called when a row is selected; fill the details_text with notes only
+        # called when a row is selected
         try:
             sel = self.tree.selection()
             if not sel:
-                # clear details
+                # clear details and integrations
                 self.details_text.configure(state='normal')
                 self.details_text.delete('1.0', 'end')
                 self.details_text.configure(state='disabled')
+                self.current_parent_system_id = None
+                self.refresh_integration_table()
                 return
+                
             item = sel[0]
+            
             # store selected app id (we set iid to app id when inserting)
             try:
                 self.selected_app_id = int(item)
+                # Set current parent system id for integrations
+                self.current_parent_system_id = self.selected_app_id
+                
+                # Update integrations title with selected system name and business unit
+                system_values = self.tree.item(item)['values']
+                system_name = system_values[0] if system_values else ""
+                business_unit = system_values[11] if len(system_values) > 11 else ""  # Business Unit is at index 11
+                if system_name and business_unit:
+                    self.integrations_title.configure(text=f"System Sub/Integrations - {system_name} - {business_unit}")
+                else:
+                    self.integrations_title.configure(text="System Sub/Integrations")
             except Exception:
                 self.selected_app_id = None
+                self.current_parent_system_id = None
+                self.integrations_title.configure(text="System Sub/Integrations")
+            
             # fetch notes from DB if possible
             notes = None
             if self.selected_app_id is not None:
                 app_row = database.get_application(self.selected_app_id)
                 if app_row is not None and len(app_row) > 12:
                     notes = app_row[12]
+            
             # display notes or default text
             self.details_text.configure(state='normal')
             self.details_text.delete('1.0', 'end')
@@ -865,8 +1085,12 @@ class AppTracker(tk.Tk):
             else:
                 self.details_text.insert('end', 'No notes')
             self.details_text.configure(state='disabled')
-        except Exception:
-            pass
+            
+            # refresh integrations table
+            self.refresh_integration_table()
+            
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to load selected system: {e}')
 
     def create_note(self):
         # Allow appending a note for the currently selected app
@@ -1021,6 +1245,553 @@ class AppTracker(tk.Tk):
             self.refresh_table()
             messagebox.showinfo('Deleted', 'Application deleted.')
 
+    def add_system_integration(self):
+        """
+        Opens a dialog to add a new system integration to the selected parent system
+        """
+        # Check if a parent system is selected
+        if self.current_parent_system_id is None:
+            messagebox.showinfo('Add Integration', 'Please select a parent system first.')
+            return
+            
+        # Create a dialog for adding integration
+        dialog = tk.Toplevel(self)
+        dialog.title('Add System Integration')
+        dialog.geometry('500x650')  # Height to fit all elements including buttons
+        dialog.minsize(500, 650)    # Minimum size to show all elements
+        dialog.resizable(False, False)  # Fix the size to ensure proper layout
+        dialog.transient(self)
+        dialog.grab_set()
+        
+        # Form elements
+        form_frame = ttk.Frame(dialog, padding=15)  # Increased padding
+        form_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Name and vendor fields
+        ttk.Label(form_frame, text='Integration Name:', anchor='e').grid(row=0, column=0, sticky='e', pady=5, padx=5)
+        name_entry = ttk.Entry(form_frame, width=40)
+        name_entry.grid(row=0, column=1, sticky='w', pady=5, padx=5)
+        name_entry.focus_set()
+        
+        ttk.Label(form_frame, text='Vendor:', anchor='e').grid(row=1, column=0, sticky='e', pady=5, padx=5)
+        vendor_entry = ttk.Entry(form_frame, width=40)
+        vendor_entry.grid(row=1, column=1, sticky='w', pady=5, padx=5)
+        
+        # Factor entry fields (same as main form)
+        factor_entries = {}
+        keys = ['Stability', 'Need', 'Criticality', 'Installed', 'DisasterRecovery', 
+                'Safety', 'Security', 'Monetary', 'CustomerService']
+        
+        for idx, key in enumerate(keys, start=2):
+            ttk.Label(form_frame, text=f'{key}:', anchor='e').grid(row=idx, column=0, sticky='e', pady=5, padx=5)
+            entry = ttk.Entry(form_frame, width=5)
+            entry.grid(row=idx, column=1, sticky='w', pady=5, padx=5)
+            factor_entries[key] = entry
+        
+        # Notes field
+        ttk.Label(form_frame, text='Notes:', anchor='e').grid(row=11, column=0, sticky='ne', pady=5, padx=5)
+        notes_text = tk.Text(form_frame, height=4, width=40, wrap='word')
+        notes_text.grid(row=11, column=1, sticky='w', pady=5, padx=5)
+        
+        # Add separator and button frame at the bottom
+        ttk.Separator(form_frame, orient='horizontal').grid(row=12, column=0, columnspan=2, sticky='ew', pady=(15, 5))
+        
+        # Button frame at the bottom
+        button_frame = ttk.Frame(form_frame)
+        button_frame.grid(row=13, column=0, columnspan=2, sticky='ew', pady=10)
+        
+        # Center the buttons using grid
+        button_frame.columnconfigure(0, weight=1)  # Left padding
+        button_frame.columnconfigure(3, weight=1)  # Right padding
+        
+        def submit_integration():
+            # Get values from form
+            try:
+                name = name_entry.get().strip()
+                if not name:
+                    messagebox.showwarning('Validation Error', 'Integration name is required')
+                    return
+                
+                # Create a dictionary with appropriate types for each field
+                # The database.add_system_integration expects Dict[str, object]
+                fields = {}
+                
+                # Add string values
+                fields['name'] = name
+                fields['vendor'] = vendor_entry.get().strip()
+                fields['notes'] = notes_text.get('1.0', 'end-1c').strip()
+                
+                # Get factor values and create ratings dictionary for score calculation
+                ratings = {}
+                for key in keys:
+                    try:
+                        value = factor_entries[key].get().strip()
+                        if value:
+                            # Store as int in the ratings dict for calculation
+                            int_value = int(value)
+                            ratings[key] = int_value
+                            # Store as int in fields dict for database
+                            fields[key.lower()] = int_value
+                        else:
+                            ratings[key] = 0
+                            fields[key.lower()] = 0
+                    except ValueError:
+                        messagebox.showwarning('Validation Error', f'{key} must be a number')
+                        return
+                
+                # Calculate risk score
+                result = database.score_application(ratings)
+                fields['risk_score'] = result.total  # Store as float
+                
+                # Submit integration to database
+                integration_id = database.add_system_integration(self.current_parent_system_id, fields)
+                if integration_id:
+                    messagebox.showinfo('Success', 'System integration submitted successfully')
+                    dialog.destroy()
+                    # Refresh the integrations table
+                    self.refresh_integration_table()
+                else:
+                    messagebox.showerror('Error', 'Failed to submit system integration')
+            except Exception as e:
+                messagebox.showerror('Error', f'Failed to add system integration: {e}')
+        
+        # Create Submit and Cancel buttons
+        submit_btn = ttk.Button(
+            button_frame,
+            text='Submit',
+            command=submit_integration,
+            style='Primary.TButton',
+            width=15
+        )
+        submit_btn.grid(row=0, column=1, padx=5)
+        
+        cancel_btn = ttk.Button(
+            button_frame,
+            text='Cancel',
+            command=dialog.destroy,
+            width=15
+        )
+        cancel_btn.grid(row=0, column=2, padx=5)
+        # Add a separator above buttons for visual clarity
+        ttk.Separator(button_frame, orient='horizontal').pack(fill='x', pady=10)
+        
+        # Create a container for the buttons to center them
+        btn_container = ttk.Frame(button_frame)
+        btn_container.pack(pady=5, fill='x')
+        
+        # Make the submit button more prominent
+        submit_btn = ttk.Button(
+            btn_container, 
+            text='Submit', 
+            command=submit_integration, 
+            style='Primary.TButton',
+            width=15  # Make button wider
+        )
+        submit_btn.pack(side='right', padx=10)
+        
+        cancel_btn = ttk.Button(
+            btn_container, 
+            text='Cancel', 
+            command=dialog.destroy,
+            width=15  # Make button wider
+        )
+        cancel_btn.pack(side='right', padx=10)
+    
+    def sort_integration_table(self, col, reverse=False):
+        """
+        Sort the integrations table by the specified column
+        """
+        try:
+            # Store the currently selected items to restore selection after sort
+            selected_ids = [int(item) for item in self.integrations_tree.selection()]
+            
+            # Get data from the tree
+            data = []
+            for item in self.integrations_tree.get_children():
+                values = self.integrations_tree.item(item, 'values')
+                item_id = int(item)
+                data.append((values, item_id))
+            
+            # Function to get the key for sorting
+            def get_sort_key(item):
+                values, _ = item
+                col_index = list(self.integrations_tree['columns']).index(col)
+                if 0 <= col_index < len(values):
+                    value = values[col_index]
+                    return self._convert_sort_value(value)
+                return ""
+            
+            # Sort data
+            data.sort(key=get_sort_key, reverse=reverse)
+            
+            # Clear and repopulate the tree with sorted data
+            self.integrations_tree.delete(*self.integrations_tree.get_children())
+            for values, item_id in data:
+                self.integrations_tree.insert('', 'end', iid=str(item_id), values=values)
+            
+            # Set the sort direction for next click
+            self.integrations_tree.heading(col, 
+                              command=lambda: self.sort_integration_table(col, not reverse))
+            
+            # Restore selection if there was one
+            if selected_ids:
+                for item in self.integrations_tree.get_children():
+                    if int(item) in selected_ids:
+                        self.integrations_tree.selection_add(item)
+                        self.integrations_tree.see(item)  # Make the first selected item visible
+                        break
+                
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to sort integrations table: {e}')
+    
+    def on_integration_select(self, event):
+        """
+        Handle integration selection in the integrations table
+        """
+        sel = self.integrations_tree.selection()
+        if not sel:
+            return
+            
+        # Get the selected integration details
+        item = sel[0]
+        try:
+            integration_id = int(item)
+            integration = database.get_system_integration(integration_id)
+            
+            if not integration:
+                return
+                
+            # Display integration details in the details text widget
+            self.details_text.configure(state='normal')
+            self.details_text.delete('1.0', 'end')
+            
+            # Format the details nicely with safe conversion
+            risk_score = 0
+            try:
+                if integration[14] is not None:  # risk_score is at index 14
+                    risk_score = float(integration[14])
+            except (ValueError, TypeError):
+                pass
+                
+            details = (
+                f"Integration: {integration[2]}\n"
+                f"Vendor: {integration[3] or 'N/A'}\n"
+                f"Risk Score: {risk_score if risk_score > 0 else 'N/A'} "
+                f"({database.dr_priority_band(risk_score)})\n"
+                f"Last Modified: {integration[15] or 'N/A'}\n"
+                f"Notes: {integration[13] or 'N/A'}"
+            )
+            
+            self.details_text.insert('1.0', details)
+            self.details_text.configure(state='disabled')
+            
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to load integration details: {e}')
+    
+    def on_system_double_click(self, event):
+        """
+        Handle double-click on a system in the main table
+        """
+        sel = self.tree.selection()
+        if not sel:
+            return
+            
+        item = sel[0]
+        try:
+            # Get the system ID and set it as current parent
+            self.current_parent_system_id = int(item)
+            
+            # Load integrations for this system
+            self.refresh_integration_table()
+            
+            # Show a message that integrations are available
+            system_name = self.tree.item(item, 'values')[0]
+            messagebox.showinfo('System Selected', 
+                               f'System "{system_name}" selected. You can now view or add integrations.')
+            
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to load system integrations: {e}')
+    
+    def delete_selected_integration(self):
+        """Delete the selected integration from the integrations tree"""
+        # Check if an integration is selected
+        sel = self.integrations_tree.selection()
+        if not sel:
+            messagebox.showinfo('Delete Integration', 'Please select an integration to delete.')
+            return
+            
+        # Get the selected integration ID
+        item = sel[0]
+        try:
+            integration_id = int(item)
+            integration = database.get_system_integration(integration_id)
+            
+            if not integration:
+                messagebox.showinfo("Delete Integration", "Could not find the selected integration.")
+                return
+                
+            # Confirm deletion
+            if messagebox.askyesno('Confirm Delete', f'Are you sure you want to delete the integration "{integration[2]}"? This cannot be undone.'):
+                # Delete the integration from the database
+                database.delete_system_integration(integration_id)
+                
+                # Refresh the integrations table
+                self.refresh_integration_table()
+                
+                messagebox.showinfo('Success', 'Integration deleted successfully')
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to delete integration: {e}')
+    
+    def refresh_integration_table(self, parent_id=None):
+        """Refresh the integrations table with current data"""
+        if parent_id is None:
+            parent_id = self.current_parent_system_id
+        
+        # Clear existing entries
+        self.integrations_tree.delete(*self.integrations_tree.get_children())
+        
+        if parent_id is None:
+            return
+            
+        try:
+            integrations = database.get_system_integrations(parent_id)
+            
+            for row in integrations:
+                if not row:
+                    continue
+                    
+                # Get name and vendor (indices 2, 3 in SQL query)
+                name = str(row[1] if row[1] is not None else "")
+                vendor = str(row[2] if row[2] is not None else "")
+                
+                # Extract ratings values (indices 4-12 in SQL query)
+                ratings = []
+                for i in range(3, 12):  # stability through customerservice
+                    try:
+                        if row[i] is not None:
+                            ratings.append(int(row[i]))
+                        else:
+                            ratings.append(0)
+                    except (ValueError, TypeError):
+                        ratings.append(0)
+                
+                # Handle risk score (index 13)
+                risk_text = "N/A"
+                try:
+                    if row[13] is not None:
+                        risk_val = float(row[13])
+                        risk_text = f"{risk_val:.1f} ({database.dr_priority_band(risk_val)})"
+                except (ValueError, TypeError, IndexError):
+                    pass
+                
+                # Handle last modified (index 14)
+                last_mod = "N/A"
+                try:
+                    if row[14]:
+                        last_mod = datetime.fromisoformat(str(row[14])).strftime('%Y-%m-%d %H:%M')
+                except (ValueError, TypeError, IndexError):
+                    if row[14]:
+                        last_mod = str(row[14])
+                
+                # Construct the values tuple for the tree
+                values = [name, vendor] + ratings + [risk_text, last_mod]
+                
+                # Get the risk score and determine color
+                risk_score = 0
+                try:
+                    if row[13] is not None:  # risk_score is at index 13
+                        risk_score = float(row[13])
+                except (ValueError, TypeError, IndexError):
+                    pass
+
+                # Get color based on risk score
+                color = get_risk_color(risk_score)
+                
+                # Insert into tree with the integration ID as the iid and apply color tag
+                self.integrations_tree.insert('', 'end', iid=str(row[0]), values=values, tags=(color,))
+                
+            # Configure the color tags for the tree
+            self.integrations_tree.tag_configure('red', background='#ffcccc')
+            self.integrations_tree.tag_configure('yellow', background='#fff2cc')
+            self.integrations_tree.tag_configure('green', background='#ccffcc')
+        
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to refresh integrations table: {e}')
+            
+    def on_integration_double_click(self, event):
+        """Handle double-click event on an integration to edit it"""
+        sel = self.integrations_tree.selection()
+        if not sel:
+            return
+            
+        item = sel[0]
+        try:
+            integration_id = int(item)
+            integration = database.get_system_integration(integration_id)
+            
+            if not integration:
+                messagebox.showinfo("Edit Integration", "Could not find the selected integration.")
+                return
+                
+            # Create a dialog for editing the integration
+            dialog = tk.Toplevel(self)
+            dialog.title(f'Edit Integration: {integration[2]}')
+            dialog.geometry('500x650')
+            dialog.minsize(500, 650)
+            dialog.resizable(False, False)
+            dialog.transient(self)
+            dialog.grab_set()
+            
+            # Form elements
+            form_frame = ttk.Frame(dialog, padding=15)
+            form_frame.pack(fill='both', expand=True, padx=10, pady=10)
+            
+            # Name and vendor fields
+            ttk.Label(form_frame, text='Integration Name:', anchor='e').grid(row=0, column=0, sticky='e', pady=5, padx=5)
+            name_entry = ttk.Entry(form_frame, width=40)
+            name_entry.grid(row=0, column=1, sticky='w', pady=5, padx=5)
+            name_entry.insert(0, integration[2] or "")
+            name_entry.focus_set()
+            
+            ttk.Label(form_frame, text='Vendor:', anchor='e').grid(row=1, column=0, sticky='e', pady=5, padx=5)
+            vendor_entry = ttk.Entry(form_frame, width=40)
+            vendor_entry.grid(row=1, column=1, sticky='w', pady=5, padx=5)
+            vendor_entry.insert(0, integration[3] or "")
+            
+            # Factor entry fields
+            factor_entries = {}
+            keys = ['Stability', 'Need', 'Criticality', 'Installed', 'DisasterRecovery', 
+                    'Safety', 'Security', 'Monetary', 'CustomerService']
+            
+            # Integration indices based on SQL query:
+            # id(0), parent_app_id(1), name(2), vendor(3), stability(4), need(5), criticality(6), installed(7), 
+            # disasterrecovery(8), safety(9), security(10), monetary(11), customerservice(12), notes(13), risk_score(14), last_modified(15)
+            factor_indices = {
+                'Stability': 4, 'Need': 5, 'Criticality': 6, 'Installed': 7, 'DisasterRecovery': 8,
+                'Safety': 9, 'Security': 10, 'Monetary': 11, 'CustomerService': 12
+            }
+            
+            for idx, key in enumerate(keys, start=2):
+                ttk.Label(form_frame, text=f'{key}:', anchor='e').grid(row=idx, column=0, sticky='e', pady=5, padx=5)
+                entry = ttk.Entry(form_frame, width=5)
+                entry.grid(row=idx, column=1, sticky='w', pady=5, padx=5)
+                
+                # Pre-populate with existing values
+                if integration[factor_indices[key]] is not None:
+                    entry.insert(0, str(integration[factor_indices[key]]))
+                    
+                factor_entries[key] = entry
+            
+            # Notes field
+            ttk.Label(form_frame, text='Notes:', anchor='e').grid(row=11, column=0, sticky='ne', pady=5, padx=5)
+            notes_text = tk.Text(form_frame, height=4, width=40, wrap='word')
+            notes_text.grid(row=11, column=1, sticky='w', pady=5, padx=5)
+            if integration[13]:  # Notes are at index 13 in the SQL query result
+                notes_text.insert('1.0', integration[13])
+            
+            # Add separator and button frame at the bottom
+            ttk.Separator(form_frame, orient='horizontal').grid(row=12, column=0, columnspan=2, sticky='ew', pady=(15, 5))
+            
+            # Button frame at the bottom
+            button_frame = ttk.Frame(form_frame)
+            button_frame.grid(row=13, column=0, columnspan=2, sticky='ew', pady=10)
+            
+            # Center the buttons using grid
+            button_frame.columnconfigure(0, weight=1)  # Left padding
+            button_frame.columnconfigure(3, weight=1)  # Right padding
+            
+            def update_integration():
+                # Get values from form
+                try:
+                    name = name_entry.get().strip()
+                    if not name:
+                        messagebox.showwarning('Validation Error', 'Integration name is required')
+                        return
+                    
+                    # Create a dictionary with appropriate types for each field
+                    fields = {}
+                    
+                    # Add string values
+                    fields['name'] = name
+                    fields['vendor'] = vendor_entry.get().strip()
+                    fields['notes'] = notes_text.get('1.0', 'end-1c').strip()
+                    
+                    # Get factor values and create ratings dictionary for score calculation
+                    ratings = {}
+                    for key in keys:
+                        try:
+                            value = factor_entries[key].get().strip()
+                            if value:
+                                # Store as int in the ratings dict for calculation
+                                int_value = int(value)
+                                ratings[key] = int_value
+                                # Store as int in fields dict for database
+                                fields[key.lower()] = int_value
+                            else:
+                                ratings[key] = 0
+                                fields[key.lower()] = 0
+                        except ValueError:
+                            messagebox.showwarning('Validation Error', f'{key} must be a number')
+                            return
+                    
+                    # Calculate risk score
+                    result = database.score_application(ratings)
+                    fields['risk_score'] = result.total  # Store as float
+                    
+                    # Update integration in database
+                    success = database.update_system_integration(integration_id, fields)
+                    if success:
+                        messagebox.showinfo('Success', 'Integration updated successfully')
+                        dialog.destroy()
+                        # Refresh the integrations table
+                        self.refresh_integration_table()
+                    else:
+                        messagebox.showerror('Error', 'Failed to update integration')
+                except Exception as e:
+                    messagebox.showerror('Error', f'Failed to update integration: {e}')
+            
+            # Add a function to delete integration
+            def delete_integration():
+                if messagebox.askyesno('Confirm Delete', 'Are you sure you want to delete this integration? This cannot be undone.'):
+                    try:
+                        database.delete_system_integration(integration_id)
+                        messagebox.showinfo('Success', 'Integration deleted successfully')
+                        dialog.destroy()
+                        # Refresh the integrations table
+                        self.refresh_integration_table()
+                    except Exception as e:
+                        messagebox.showerror('Error', f'Failed to delete integration: {e}')
+            
+            # Create Update, Delete and Cancel buttons
+            update_btn = ttk.Button(
+                button_frame,
+                text='Update',
+                command=update_integration,
+                style='Primary.TButton',
+                width=15
+            )
+            update_btn.grid(row=0, column=1, padx=5)
+            
+            delete_btn = ttk.Button(
+                button_frame,
+                text='Delete',
+                command=delete_integration,
+                style='Danger.TButton',  # Use a danger style if available
+                width=15
+            )
+            delete_btn.grid(row=0, column=2, padx=5)
+            
+            cancel_btn = ttk.Button(
+                button_frame,
+                text='Cancel',
+                command=dialog.destroy,
+                width=15
+            )
+            cancel_btn.grid(row=0, column=3, padx=5)
+            
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to load integration for editing: {e}')
+            
 if __name__ == '__main__':
     app = AppTracker()
     app.mainloop()

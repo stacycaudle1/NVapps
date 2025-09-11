@@ -148,6 +148,27 @@ def init_db():
         FOREIGN KEY(app_id) REFERENCES applications(id),
         FOREIGN KEY(unit_id) REFERENCES business_units(id)
     )''')
+    
+    # Create table for system sub-integrations if it doesn't exist
+    c.execute('''CREATE TABLE IF NOT EXISTS system_integrations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        parent_app_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        vendor TEXT,
+        stability INTEGER DEFAULT 0,
+        need INTEGER DEFAULT 0,
+        criticality INTEGER DEFAULT 0,
+        installed INTEGER DEFAULT 0,
+        disasterrecovery INTEGER DEFAULT 0,
+        safety INTEGER DEFAULT 0,
+        security INTEGER DEFAULT 0,
+        monetary INTEGER DEFAULT 0,
+        customerservice INTEGER DEFAULT 0,
+        notes TEXT,
+        risk_score REAL,
+        last_modified TEXT,
+        FOREIGN KEY(parent_app_id) REFERENCES applications(id)
+    )''')
     conn.commit()
     conn.close()
 
@@ -220,9 +241,111 @@ def update_application(app_id, fields: Dict[str, object]):
 def purge_database():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    c.execute('DELETE FROM system_integrations')
     c.execute('DELETE FROM application_business_units')
     c.execute('DELETE FROM applications')
     c.execute('DELETE FROM business_units')
     c.execute('DELETE FROM users')
+    conn.commit()
+    conn.close()
+
+# System Integration Functions
+def add_system_integration(parent_app_id, fields: Dict[str, object]):
+    """Add a new system integration entry linked to a parent application"""
+    if 'name' not in fields or not fields['name']:
+        return None
+    
+    allowed_fields = {'name', 'vendor', 'stability', 'need', 'criticality', 'installed', 
+                      'disasterrecovery', 'safety', 'security', 'monetary', 'customerservice',
+                      'notes', 'risk_score'}
+    
+    field_keys = []
+    field_placeholders = []
+    values = [parent_app_id]
+    
+    for k, v in fields.items():
+        key = k.lower()
+        if key in allowed_fields:
+            field_keys.append(key)
+            field_placeholders.append('?')
+            values.append(v)
+    
+    # Always add last_modified
+    field_keys.append('last_modified')
+    field_placeholders.append('?')
+    values.append(datetime.utcnow().isoformat())
+    
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    sql = f"INSERT INTO system_integrations (parent_app_id, {', '.join(field_keys)}) VALUES (?, {', '.join(field_placeholders)})"
+    c.execute(sql, tuple(values))
+    integration_id = c.lastrowid
+    conn.commit()
+    conn.close()
+    
+    return integration_id
+
+def get_system_integrations(parent_app_id):
+    """Get all system integrations for a parent application"""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('''SELECT id, name, vendor, stability, need, criticality, installed, 
+                 disasterrecovery, safety, security, monetary, customerservice, 
+                 notes, risk_score, last_modified
+                 FROM system_integrations 
+                 WHERE parent_app_id = ?
+                 ORDER BY name''', (parent_app_id,))
+    integrations = c.fetchall()
+    conn.close()
+    return integrations
+
+def get_system_integration(integration_id):
+    """Get a specific system integration by ID"""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('''SELECT id, parent_app_id, name, vendor, stability, need, criticality, installed, 
+                 disasterrecovery, safety, security, monetary, customerservice, 
+                 notes, risk_score, last_modified
+                 FROM system_integrations 
+                 WHERE id = ?''', (integration_id,))
+    integration = c.fetchone()
+    conn.close()
+    return integration
+
+def update_system_integration(integration_id, fields: Dict[str, object]):
+    """Update a system integration record"""
+    if not fields:
+        return
+    
+    allowed = {'name', 'vendor', 'stability', 'need', 'criticality', 'installed', 
+               'disasterrecovery', 'safety', 'security', 'monetary', 'customerservice', 
+               'notes', 'risk_score'}
+    
+    set_parts = []
+    values = []
+    
+    for k, v in fields.items():
+        key = k.lower()
+        if key in allowed:
+            set_parts.append(f"{key} = ?")
+            values.append(v)
+    
+    # update last_modified
+    set_parts.append('last_modified = ?')
+    values.append(datetime.utcnow().isoformat())
+    values.append(integration_id)
+    
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    sql = f"UPDATE system_integrations SET {', '.join(set_parts)} WHERE id = ?"
+    c.execute(sql, tuple(values))
+    conn.commit()
+    conn.close()
+
+def delete_system_integration(integration_id):
+    """Delete a system integration record"""
+    conn = sqlite3.connect(DB_NAME)
+    c = conn.cursor()
+    c.execute('DELETE FROM system_integrations WHERE id = ?', (integration_id,))
     conn.commit()
     conn.close()
