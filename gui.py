@@ -243,7 +243,7 @@ class AppTracker(tk.Tk):
         self.vendor_entry = ttk.Entry(form_frame)
         self.vendor_entry.grid(row=10, column=1, sticky='ew', padx=padx, pady=pady)
 
-        ttk.Label(form_frame, text='Departments').grid(row=11, column=0, sticky='nw', padx=padx, pady=pady)
+        ttk.Label(form_frame, text='Business Unit').grid(row=11, column=0, sticky='nw', padx=padx, pady=pady)
         dept_frame = ttk.Frame(form_frame)
         dept_frame.grid(row=11, column=1, sticky='nsew', padx=padx, pady=pady)
         
@@ -278,6 +278,8 @@ class AppTracker(tk.Tk):
         ttk.Button(edit_frame, text='Save Changes', command=self.save_edit, style='Primary.TButton').pack(side='left', padx=6)
         ttk.Button(edit_frame, text='Create Note', command=self.create_note, style='Secondary.TButton').pack(side='left', padx=6)
         ttk.Button(edit_frame, text='Save Note', command=self.save_notes, style='Primary.TButton').pack(side='left', padx=6)
+        # Add 'Delete Selected' button after 'Save Changes' button
+        ttk.Button(edit_frame, text='Delete Selected', command=self.delete_selected_app, style='Danger.TButton').pack(side='left', padx=6)
 
         # Right frame: filter + table
         control_frame = ttk.Frame(right_frame)
@@ -334,24 +336,6 @@ class AppTracker(tk.Tk):
         # expose as attribute so handlers can update it
         self.details_text = details_text
 
-        # Resize handler: distribute available width across columns proportionally
-        def _resize_columns(event):
-            try:
-                total = event.width - 4  # small padding
-                # ensure scrollbar width not included
-                weights = [3, 2, 1, 1, 1, 1, 2, 1, 1, 1, 2, 2, 1]
-                # fallback if counts differ
-                if len(weights) != len(cols):
-                    weights[:] = [1] * len(cols)
-                s = sum(weights) or 1
-                for i, col in enumerate(cols):
-                    w = max(60, int(total * weights[i] / s))
-                    self.tree.column(col, width=w)
-            except Exception:
-                pass
-
-        table_frame.bind('<Configure>', _resize_columns)
-
         # populate details area when a row is selected
         self.tree.bind('<<TreeviewSelect>>', self.on_tree_select)
 
@@ -364,6 +348,20 @@ class AppTracker(tk.Tk):
         item = sel[0]
         vals = self.tree.item(item, 'values')
         try:
+            # Clear all current selections
+            self.department_listbox.selection_clear(0, tk.END)
+            
+            # Get the departments for this application
+            app_id = int(item)
+            app_departments = database.get_app_departments(app_id)
+            
+            # Select departments in the listbox
+            for i in range(self.department_listbox.size()):
+                dept_name = self.department_listbox.get(i)
+                if dept_name in app_departments:
+                    self.department_listbox.selection_set(i)
+            
+            # Load other fields
             self.name_entry.delete(0, 'end')
             self.name_entry.insert(0, vals[0])
             self.vendor_entry.delete(0, 'end')
@@ -374,8 +372,8 @@ class AppTracker(tk.Tk):
                 if entry is not None:
                     entry.delete(0, 'end')
                     entry.insert(0, vals[i])
-        except Exception:
-            messagebox.showerror('Error', 'Failed to load selected row for editing.')
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to load selected row for editing: {e}')
 
     def save_edit(self):
         sel = self.tree.selection()
@@ -415,36 +413,62 @@ class AppTracker(tk.Tk):
             except ValueError:
                 messagebox.showerror('Error', f'{label} must be an integer.')
                 return
+
         selected_indices = self.department_listbox.curselection()
         if not selected_indices:
             messagebox.showerror('Error', 'Please select at least one department.')
             return
+
         departments = self.get_departments()
         dept_ids = [departments[i][0] for i in selected_indices]
-        conn = database.sqlite3.connect(database.DB_NAME)
-        c = conn.cursor()
         last_mod = datetime.utcnow().isoformat()
-        # calculate risk score using the same scoring function
+
         ratings = {
             'Stability': factors['Stability'], 'Need': factors['Need'], 'Criticality': factors['Criticality'],
             'Installed': factors['Installed'], 'DisasterRecovery': factors['DisasterRecovery'], 'Safety': factors['Safety'],
             'Security': factors['Security'], 'Monetary': factors['Monetary'], 'CustomerService': factors['CustomerService']
         }
+
+        conn = None
+        app_id = None
         try:
-            score_result = database.score_application(ratings)
-            risk_score = score_result.total
-        except Exception:
-            risk_score = 0
-        c.execute('''INSERT INTO applications (
-            name, vendor, stability, need, criticality, installed, disasterrecovery, safety, security, monetary, customerservice, risk_score, last_modified
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-            (name, vendor, factors['Stability'], factors['Need'], factors['Criticality'], factors['Installed'], factors['DisasterRecovery'],
-             factors['Safety'], factors['Security'], factors['Monetary'], factors['CustomerService'], risk_score, last_mod))
-        app_id = c.lastrowid
-        conn.commit()
-        conn.close()
-        database.link_app_to_departments(app_id, dept_ids)
-        # Clear the input fields after adding the application
+            conn = database.sqlite3.connect(database.DB_NAME)
+            c = conn.cursor()
+
+            try:
+                score_result = database.score_application(ratings)
+                risk_score = score_result.total
+            except Exception:
+                risk_score = 0
+
+            # Create a separate application entry for each department
+            app_ids = []
+            for dept_id in dept_ids:
+                # Create new application entry
+                c.execute('''INSERT INTO applications (
+                    name, vendor, stability, need, criticality, installed, disasterrecovery, safety, security, monetary, customerservice, risk_score, last_modified
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                    (name, vendor, factors['Stability'], factors['Need'], factors['Criticality'], factors['Installed'], factors['DisasterRecovery'],
+                     factors['Safety'], factors['Security'], factors['Monetary'], factors['CustomerService'], risk_score, last_mod))
+                
+                app_id = c.lastrowid
+                app_ids.append(app_id)
+                
+                # Create department link for this application
+                c.execute('INSERT INTO application_departments (app_id, dept_id) VALUES (?, ?)', 
+                         (app_id, dept_id))
+            
+            conn.commit()
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to add application: {e}')
+            return
+        finally:
+            if conn:
+                conn.close()
+
+        if not app_ids:
+            messagebox.showerror('Error', 'Failed to create application entries.')
+
         self.name_entry.delete(0, tk.END)
         self.vendor_entry.delete(0, tk.END)
         for entry in self.factor_entries.values():
@@ -558,9 +582,9 @@ class AppTracker(tk.Tk):
             messagebox.showinfo('Save Note', 'Please select an application to save notes for.')
             return
         try:
-            text = self.details_text.get('1.0', 'end').strip()
+            notes_text = self.details_text.get('1.0', 'end').strip()
             # Update notes via database helper
-            database.update_application(self.selected_app_id, {'notes': text})
+            database.update_application(self.selected_app_id, {'notes': notes_text})
             # Make read-only again
             self.details_text.configure(state='disabled')
             # Refresh table to reflect last_modified change
@@ -598,6 +622,30 @@ class AppTracker(tk.Tk):
         departments = self.get_departments()
         for dept_id, dept_name in departments:
             self.department_listbox.insert('end', dept_name)
+
+    def delete_selected_app(self):
+        sel = self.tree.selection()
+        if not sel:
+            messagebox.showinfo('Delete', 'Please select an application to delete.')
+            return
+        item = sel[0]
+        # get app id from iid
+        try:
+            app_id = int(item)
+        except Exception:
+            messagebox.showerror('Delete', 'Could not determine application id for selected row.')
+            return
+        if messagebox.askyesno('Confirm Delete', 'Are you sure you want to delete the selected application? This cannot be undone.'):
+            conn = database.sqlite3.connect(database.DB_NAME)
+            c = conn.cursor()
+            # Remove from application_departments first to avoid foreign key constraint
+            c.execute('DELETE FROM application_departments WHERE app_id = ?', (app_id,))
+            # Now remove the application
+            c.execute('DELETE FROM applications WHERE id = ?', (app_id,))
+            conn.commit()
+            conn.close()
+            self.refresh_table()
+            messagebox.showinfo('Deleted', 'Application deleted.')
 
 if __name__ == '__main__':
     app = AppTracker()

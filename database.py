@@ -168,6 +168,7 @@ def calculate_business_risk(app_row):
     return result.total, result.priority
 
 def link_app_to_departments(app_id, dept_ids):
+    print(f"DEBUG: Linking app_id {app_id} to dept_ids {dept_ids}")
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
     for dept_id in dept_ids:
