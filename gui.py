@@ -98,7 +98,7 @@ class AppTracker(tk.Tk):
     def add_department_popup(self):
         popup = tk.Toplevel(self)
         popup.title('Add Department')
-        ttk.Label(popup, text='Department Name:').pack(padx=10, pady=5)
+        ttk.Label(popup, text='Business Unit:').pack(padx=10, pady=5)
         dept_entry = ttk.Entry(popup)
         dept_entry.pack(padx=10, pady=5)
 
@@ -265,8 +265,8 @@ class AppTracker(tk.Tk):
         dept_frame.grid_configure(pady=(pady, pady*2))  # Add extra padding below
         dept_frame.pack_propagate(False)
 
-        ttk.Button(form_frame, text='Add Dept', command=self.add_department_popup, style='Primary.TButton').grid(row=12, column=0, padx=padx, pady=pady)
-        ttk.Button(form_frame, text='Manage Depts', command=self.manage_departments_popup, style='Secondary.TButton').grid(row=12, column=1, padx=padx, pady=pady)
+        ttk.Button(form_frame, text='Add Business Unit', command=self.add_department_popup, style='Primary.TButton').grid(row=12, column=0, padx=padx, pady=pady)
+        ttk.Button(form_frame, text='Manage Business Units', command=self.manage_departments_popup, style='Secondary.TButton').grid(row=12, column=1, padx=padx, pady=pady)
 
         ttk.Button(form_frame, text='Add Application', command=self.add_application, style='Primary.TButton').grid(row=13, column=0, columnspan=2, sticky='ew', pady=(12,6), padx=padx)
         ttk.Button(form_frame, text='Purge Database', command=self.purge_database_gui, style='Danger.TButton').grid(row=14, column=0, columnspan=2, sticky='ew', padx=padx)
@@ -444,6 +444,12 @@ class AppTracker(tk.Tk):
         conn.commit()
         conn.close()
         database.link_app_to_departments(app_id, dept_ids)
+        # Clear the input fields after adding the application
+        self.name_entry.delete(0, tk.END)
+        self.vendor_entry.delete(0, tk.END)
+        for entry in self.factor_entries.values():
+            entry.delete(0, tk.END)
+        self.department_listbox.selection_clear(0, tk.END)
         self.refresh_table()
 
     def refresh_table(self):
