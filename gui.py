@@ -174,10 +174,19 @@ class AppTracker(tk.Tk):
     def show_report(self):
         report_win = tk.Toplevel(self)
         report_win.title('Business Unit Risk Report')
+        report_win.configure(bg=WIN_BG)
+        
+        # Add a modern header to the report
+        header_frame = tk.Frame(report_win, bg=WIN_BG)
+        header_frame.pack(fill='x', pady=(10, 15))
+        header_label = tk.Label(header_frame, text='Business Unit Risk Overview', 
+                              font=('Segoe UI', 14, 'bold'), fg=ACCENT, bg=WIN_BG)
+        header_label.pack(side='left', padx=15)
+        
         tree = ttk.Treeview(report_win, columns=('Business Unit', 'App Count', 'Avg Risk', 'Status'), show='headings')
         for col in tree['columns']:
             tree.heading(col, text=col, command=lambda c=col: self.report_sort_table(tree, c, False))
-        tree.pack(fill='both', expand=True)
+        tree.pack(fill='both', expand=True, padx=15, pady=(0, 15))
         conn = database.sqlite3.connect(database.DB_NAME)
         c = conn.cursor()
         # Aggregate by business unit using the correct business_units relationship
@@ -275,40 +284,64 @@ class AppTracker(tk.Tk):
         right_frame = ttk.Frame(paned, padding=12)
         paned.add(right_frame, weight=1)
 
+        # Define label style for modern field labels
+        self.form_label_style = {'font': ('Segoe UI', 10, 'bold'), 'fg': ACCENT, 'bg': WIN_BG, 'padx': 10}
+        
         # Form content with consistent padding
         padx = 8
         pady = 8
-        ttk.Label(form_frame, text='App Name', font=('Segoe UI', 10, 'bold')).grid(row=0, column=0, sticky='w', padx=padx, pady=pady)
-        self.name_entry = ttk.Entry(form_frame)
-        self.name_entry.grid(row=0, column=1, sticky='ew', padx=padx, pady=pady)
+        # Define category headers style for grouping
+        self.category_style = {'font': ('Segoe UI', 11, 'bold'), 'fg': '#333333', 'bg': WIN_BG, 'pady': 5}
 
-        # factor entries (Inserted 'Installed' under Criticality)
+        # Create a category header for Rating Factors - moved above app name label
+        ratings_header = tk.Label(form_frame, text="Rating Factors", **self.category_style)
+        ratings_header.grid(row=0, column=0, sticky='w', pady=(0, 10))
+        
+        app_name_label = tk.Label(form_frame, text='App Name', **self.form_label_style)
+        app_name_label.grid(row=1, column=0, sticky='w', padx=padx, pady=pady)
+        self.name_entry = ttk.Entry(form_frame)
+        self.name_entry.grid(row=1, column=1, sticky='ew', padx=padx, pady=pady)
+        
+        # factor entries with modern styling
         factor_labels = [
-            ('Stability', 1),
-            ('Need', 2),
-            ('Criticality', 3),
-            ('Installed', 4),
-            ('DisasterRecovery', 5),
-            ('Safety', 6),
-            ('Security', 7),
-            ('Monetary', 8),
-            ('CustomerService', 9)
+            ('Stability', 2),
+            ('Need', 3),
+            ('Criticality', 4),
+            ('Installed', 5),
+            ('DisasterRecovery', 6),
+            ('Safety', 7),
+            ('Security', 8),
+            ('Monetary', 9),
+            ('CustomerService', 10)
         ]
+        
+        # Add a subtle separator below the Rating Factors header
+        ttk.Separator(form_frame, orient='horizontal').grid(row=0, column=0, columnspan=2, sticky='ew', pady=(30, 5))
+        
+        # Add the factor entries with modern labels
         self.factor_entries = {}
         for label, row in factor_labels:
-            ttk.Label(form_frame, text=label).grid(row=row, column=0, sticky='w', padx=padx, pady=pady)
+            factor_label = tk.Label(form_frame, text=label, **self.form_label_style)
+            factor_label.grid(row=row, column=0, sticky='w', padx=padx, pady=pady)
             entry = ttk.Entry(form_frame, width=12)
             entry.grid(row=row, column=1, sticky='w', padx=padx, pady=pady)
             self.factor_entries[label] = entry
-        ttk.Label(form_frame, text='Related Vendor').grid(row=10, column=0, sticky='w', padx=padx, pady=pady)
+            
+        vendor_label = tk.Label(form_frame, text='Related Vendor', **self.form_label_style)
+        vendor_label.grid(row=11, column=0, sticky='w', padx=padx, pady=pady)
         self.vendor_entry = ttk.Entry(form_frame)
-        self.vendor_entry.grid(row=10, column=1, sticky='ew', padx=padx, pady=pady)
+        self.vendor_entry.grid(row=11, column=1, sticky='ew', padx=padx, pady=pady)
 
-        ttk.Label(form_frame, text='Business Unit').grid(row=11, column=0, sticky='nw', padx=padx, pady=pady)
+        # Create a section header for Business Units - moved to left column
+        bu_header = tk.Label(form_frame, text="Select Business Units", **self.category_style)
+        bu_header.grid(row=12, column=0, sticky='nw', padx=padx, pady=(0, 2))
         
-        # Create a frame to hold both buttons vertically
+        # Add a subtle separator - moved to match the header position
+        ttk.Separator(form_frame, orient='horizontal').grid(row=12, column=0, columnspan=2, sticky='ew', pady=(25, 5))
+        
+        # Create a frame to hold both buttons vertically - moved to row 13, left of business units textbox
         buttons_frame = ttk.Frame(form_frame)
-        buttons_frame.grid(row=11, column=0, sticky='nw', padx=padx, pady=(40,0))
+        buttons_frame.grid(row=13, column=0, sticky='nw', padx=padx, pady=pady)
         
         # Add Business Unit button - with left alignment (anchor='w')
         ttk.Button(buttons_frame, text='Add Business Unit', command=self.add_department_popup, style='Primary.TButton').pack(pady=5, anchor='w', fill='x')
@@ -317,7 +350,7 @@ class AppTracker(tk.Tk):
         ttk.Button(buttons_frame, text='Manage Business Units', command=self.manage_departments_popup, style='Primary.TButton').pack(pady=5)
         
         dept_frame = ttk.Frame(form_frame)
-        dept_frame.grid(row=11, column=1, sticky='nsew', padx=padx, pady=pady)
+        dept_frame.grid(row=13, column=1, sticky='nsew', padx=padx, pady=pady)
         
         # Set minimum size for the department frame
         dept_frame.grid_propagate(False)
@@ -325,7 +358,8 @@ class AppTracker(tk.Tk):
 
         # Create department listbox with white background and increased height
         self.department_listbox = tk.Listbox(dept_frame, selectmode='multiple', exportselection=0, 
-                                           height=15, width=40, bg='white', font=('Segoe UI', 10))
+                                           height=15, width=40, bg='white', font=('Segoe UI', 10),
+                                           highlightthickness=1, highlightcolor=ACCENT, borderwidth=1)
         self.department_listbox.pack(side='left', fill='both', expand=True)
 
         dept_scrollbar = ttk.Scrollbar(dept_frame, orient='vertical', command=self.department_listbox.yview)
@@ -337,8 +371,8 @@ class AppTracker(tk.Tk):
         dept_frame.grid_configure(pady=(pady, pady*2))  # Add extra padding below
         dept_frame.pack_propagate(False)
 
-        # Add Application button (now in row 13 since we removed the separate Manage Business Units button)
-        ttk.Button(form_frame, text='Add Application', command=self.add_application, style='Primary.TButton').grid(row=13, column=0, columnspan=2, sticky='ew', pady=(12,6), padx=padx)
+        # Add Application button - moved to row 14 since we've adjusted the layout
+        ttk.Button(form_frame, text='Add Application', command=self.add_application, style='Primary.TButton').grid(row=14, column=0, columnspan=2, sticky='ew', pady=(20,6), padx=padx)
 
         # Create a frame for top-right buttons
         top_buttons_frame = ttk.Frame(right_frame)
@@ -360,10 +394,15 @@ class AppTracker(tk.Tk):
         # Add 'Delete Selected' button 
         ttk.Button(edit_frame, text='Delete Selected', command=self.delete_selected_app, style='Danger.TButton').pack(side='left', padx=6)
 
-        # Right frame: filter + table
+        # Right frame: filter + table with modern styling
         control_frame = ttk.Frame(right_frame)
         control_frame.pack(fill='x', pady=(0,6))
-        ttk.Label(control_frame, text='Filter by Department:').pack(side='left', padx=(0,6))
+        
+        # Create a more modern filter label
+        filter_label_style = {'font': ('Segoe UI', 10), 'fg': ACCENT, 'bg': WIN_BG}
+        filter_label = tk.Label(control_frame, text='Filter by Business Unit:', **filter_label_style)
+        filter_label.pack(side='left', padx=(0,6))
+        
         self.filter_combo = ttk.Combobox(control_frame, values=['All'] + [d[1] for d in self.get_departments()], width=24)
         self.filter_combo.current(0)
         self.filter_combo.pack(side='left')
