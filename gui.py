@@ -82,13 +82,14 @@ class AppTracker(tk.Tk):
         # Configure active tab
         style.map('TNotebook.Tab', background=[('selected', ACCENT)], foreground=[('selected', 'white')])
         default_font = ('Segoe UI', 10)
-        # Smaller font for table rows to ensure text fits in cells
+        # Denser font and smaller row height for tighter table layout
         tree_font = ('Segoe UI', 8)
         heading_font = ('Segoe UI', 10, 'bold')
         style.configure('.', font=default_font)
-        style.configure('Treeview', rowheight=28, font=tree_font, background='white', fieldbackground='white')
-        # Stronger heading style for visibility
-        style.configure('Treeview.Heading', font=heading_font, background=HEADER_BG, foreground=HEADER_FG, relief='flat', borderwidth=0, padding=(8,4))
+        # Reduce rowheight to make rows closer together
+        style.configure('Treeview', rowheight=22, font=tree_font, background='white', fieldbackground='white')
+        # Tighten heading padding so columns sit closer together
+        style.configure('Treeview.Heading', font=heading_font, background=HEADER_BG, foreground=HEADER_FG, relief='flat', borderwidth=0, padding=(4,2))
         # Ensure mapping works across themes
         try:
             style.map('Treeview.Heading', background=[('active', HEADER_BG), ('!disabled', HEADER_BG)], foreground=[('active', HEADER_FG), ('!disabled', HEADER_FG)])
@@ -213,28 +214,28 @@ class AppTracker(tk.Tk):
             return
             
         # Convert to DataFrame for easier manipulation
-        df = pd.DataFrame(data, columns=['System', 'Criticality', 'Risk'])
-        
+        df = pd.DataFrame(data, columns=['Division', 'Criticality', 'Risk'])
+
         # Sort based on selected option
         if sort_by == "Criticality":
             df = df.sort_values('Criticality', ascending=False)
         elif sort_by == "Risk Score":
             df = df.sort_values('Risk', ascending=False)
-        else:  # System Name
-            df = df.sort_values('System')
-            
+        else:  # Division Name
+            df = df.sort_values('Division')
+
         # Create the matplotlib figure
         fig, ax = plt.subplots(figsize=(12, 6))
         bars = ax.bar(range(len(df)), df['Criticality'])
-        
+
         # Customize the chart
-        ax.set_title('System Criticality Comparison', fontsize=12, pad=15)
-        ax.set_xlabel('Systems', fontsize=10)
+        ax.set_title('Division Criticality Comparison', fontsize=12, pad=15)
+        ax.set_xlabel('Divisions', fontsize=10)
         ax.set_ylabel('Criticality Score', fontsize=10)
-        
-        # Add system names as x-tick labels
-        plt.xticks(range(len(df)), df['System'].tolist(), rotation=45, ha='right')
-        
+
+        # Add division names as x-tick labels
+        plt.xticks(range(len(df)), df['Division'].tolist(), rotation=45, ha='right')
+
         # Color the bars based on criticality score
         for bar, score in zip(bars, df['Criticality']):
             if score >= 8:
@@ -243,21 +244,20 @@ class AppTracker(tk.Tk):
                 bar.set_color('#ffcc99')  # Light orange
             else:
                 bar.set_color('#99cc99')  # Light green
-        
+
         # Add value labels on top of bars
         for bar in bars:
             height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width()/2., height,
-                   f'{height:.1f}', ha='center', va='bottom')
-        
+            ax.text(bar.get_x() + bar.get_width() / 2., height, f'{height:.1f}', ha='center', va='bottom')
+
         # Adjust layout to prevent label cutoff
         plt.tight_layout()
-        
+
         # Create canvas and embed in frame
         canvas = FigureCanvasTkAgg(fig, master=chart_frame)
         canvas.draw()
         canvas.get_tk_widget().pack(fill='both', expand=True)
-        
+
         # Close the figure to free memory
         plt.close(fig)
     
@@ -527,48 +527,48 @@ class AppTracker(tk.Tk):
         form_frame.grid_columnconfigure(1, weight=1)
         dept_frame.grid_configure(pady=(pady, pady*2))
 
-        # Add a spacer row to separate Business Units and Rating Factors
+        # Add a spacer row to separate Business Units and Division
         # (Row indices below shift the rating form down to avoid collisions.)
 
-        # Create a category header for Rating Factors (shifted down)
-        ratings_header = tk.Label(form_frame, text="Rating Factors", **self.category_style)
-        ratings_header.grid(row=5, column=0, sticky='w', pady=(0, 10))
+        # Create a category header for Division (shifted down)
+        # ratings_header = tk.Label(form_frame, text="Division", **self.category_style)
+        #ratings_header.grid(row=5, column=0, sticky='w', pady=(0, 10))
 
-        app_name_label = tk.Label(form_frame, text='System', **self.form_label_style)
+        app_name_label = tk.Label(form_frame, text='Enter Division:', **self.form_label_style)
         app_name_label.grid(row=6, column=0, sticky='e', padx=(padx, 2), pady=pady)
         self.name_entry = ttk.Entry(form_frame)
         self.name_entry.grid(row=6, column=1, sticky='ew', padx=(0, padx), pady=pady)
 
-        # factor entries with modern styling (shifted row indices)
-        factor_labels = [
-            ('Score', 7),
-            ('Need', 8),
-            ('Criticality', 9),
-            ('Installed', 10),
-            ('DisasterRecovery', 11),
-            ('Safety', 12),
-            ('Security', 13),
-            ('Monetary', 14),
-            ('CustomerService', 15)
-        ]
+        # # factor entries with modern styling (shifted row indices)
+        # factor_labels = [
+        #     ('Score', 7),
+        #     ('Need', 8),
+        #     ('Criticality', 9),
+        #     ('Installed', 10),
+        #     ('DisasterRecovery', 11),
+        #     ('Safety', 12),
+        #     ('Security', 13),
+        #     ('Monetary', 14),
+        #     ('CustomerService', 15)
+        # ]
 
-        ttk.Separator(form_frame, orient='horizontal').grid(row=5, column=0, columnspan=2, sticky='ew', pady=(30, 5))
+        # ttk.Separator(form_frame, orient='horizontal').grid(row=5, column=0, columnspan=2, sticky='ew', pady=(30, 5))
 
-        self.factor_entries = {}
-        for label, row in factor_labels:
-            factor_label = tk.Label(form_frame, text=label, **self.form_label_style)
-            factor_label.grid(row=row, column=0, sticky='e', padx=(padx, 2), pady=pady)
-            entry = ttk.Entry(form_frame, width=10)
-            entry.grid(row=row, column=1, sticky='w', padx=(0, padx), pady=pady)
-            self.factor_entries[label] = entry
+        # self.factor_entries = {}
+        # for label, row in factor_labels:
+        #     factor_label = tk.Label(form_frame, text=label, **self.form_label_style)
+        #     factor_label.grid(row=row, column=0, sticky='e', padx=(padx, 2), pady=pady)
+        #     entry = ttk.Entry(form_frame, width=10)
+        #     entry.grid(row=row, column=1, sticky='w', padx=(0, padx), pady=pady)
+        #     self.factor_entries[label] = entry
 
-        vendor_label = tk.Label(form_frame, text='Related Vendor', **self.form_label_style)
-        vendor_label.grid(row=16, column=0, sticky='e', padx=(padx, 2), pady=pady)
-        self.vendor_entry = ttk.Entry(form_frame)
-        self.vendor_entry.grid(row=16, column=1, sticky='ew', padx=(0, padx), pady=pady)
+        # vendor_label = tk.Label(form_frame, text='Related Vendor', **self.form_label_style)
+        # vendor_label.grid(row=16, column=0, sticky='e', padx=(padx, 2), pady=pady)
+        # self.vendor_entry = ttk.Entry(form_frame)
+        # self.vendor_entry.grid(row=16, column=1, sticky='ew', padx=(0, padx), pady=pady)
 
-        # Add Application button (moved down to avoid overlap)
-        ttk.Button(form_frame, text='Add Application', command=self.add_application, style='Primary.TButton').grid(row=19, column=0, columnspan=2, sticky='ew', pady=(20,6), padx=padx)
+        # Add Division button (moved down to avoid overlap)
+        ttk.Button(form_frame, text='Add Division', command=self.add_application, style='Primary.TButton').grid(row=19, column=0, columnspan=2, sticky='ew', pady=(20,6), padx=padx)
 
         # Create a frame for top-right buttons
         top_buttons_frame = ttk.Frame(right_frame)
@@ -672,40 +672,25 @@ class AppTracker(tk.Tk):
         table_frame.pack(fill='both', expand=True, side='top')
         
         # Main systems table title
-        systems_title = ttk.Label(table_frame, text="Systems", font=('Segoe UI', 11, 'bold'))
+        systems_title = ttk.Label(table_frame, text="Business Unit / Division", font=('Segoe UI', 11, 'bold'))
         systems_title.grid(row=0, column=0, sticky='w', padx=5, pady=(0, 5))
         
+        # Reduce visible columns to only what's required by the user: Business Unit, Division, Last Modified
         self.tree = ttk.Treeview(
             table_frame,
-            columns=(
-                'System', 'Vendor', 'Score', 'Need', 'Criticality', 'Installed',
-                'DisasterRecovery', 'Safety', 'Security', 'Monetary', 'CustomerService',
-                'Business Unit', 'Risk', 'Last Modified'
-            ),
+            columns=('Business Unit', 'Division', 'Last Modified'),
             show='headings'
         )
-        # column sizing: adjusted widths to ensure text fits better in cells
+        # apply sensible widths for the reduced set (Business Unit first)
         cols = list(self.tree['columns'])
-        base_widths = {
-            'System': 220, 'Vendor': 160, 'Score': 80, 'Need': 80, 'Criticality': 90,
-            'Installed': 80, 'DisasterRecovery': 100, 'Safety': 80, 'Security': 80,
-            'Monetary': 80, 'CustomerService': 140, 'Business Unit': 180, 'Risk': 80, 'Last Modified': 150
-        }
-        # apply initial widths and make columns stretchable with improved text display
+        base_widths = {'Business Unit': 260, 'Division': 300, 'Last Modified': 140}
         for col in cols:
-            w = base_widths.get(col, 100)
-            # Left-align text columns, center-align numeric columns
-            anchor = 'w' if col in ('System', 'Vendor', 'Business Unit') else 'center'
-            # Use abbreviations for wider column names to help with spacing
-            if col == 'DisasterRecovery':
-                heading_text = 'DR'
-            elif col == 'CustomerService':
-                heading_text = 'Cust Service'
-            else:
-                heading_text = col
-            # Fixed command lambda to properly capture column variable
+            w = base_widths.get(col, 120)
+            anchor = 'w' if col in ('Division', 'Business Unit') else 'center'
+            heading_text = col
             self.tree.heading(col, text=heading_text, command=lambda c=col: self.sort_table(c, False))
-            self.tree.column(col, width=w, anchor=anchor, stretch=True, minwidth=w)
+            # Disable stretch to keep columns at the specified widths and closer together
+            self.tree.column(col, width=w, anchor=anchor, stretch=False, minwidth=60)
 
         # vertical scrollbar for main systems table
         vsb = ttk.Scrollbar(table_frame, orient='vertical', command=self.tree.yview)
@@ -807,7 +792,6 @@ class AppTracker(tk.Tk):
             messagebox.showinfo('Edit', 'Please select a row to edit.')
             return
         item = sel[0]
-        vals = self.tree.item(item, 'values')
         try:
             # Clear all current selections
             self.department_listbox.selection_clear(0, tk.END)
@@ -822,27 +806,38 @@ class AppTracker(tk.Tk):
                 if dept_name in app_departments:
                     self.department_listbox.selection_set(i)
 
-            # Load other fields using named access from tree values
-            self.name_entry.delete(0, 'end')
-            self.name_entry.insert(0, vals[0])
-            self.vendor_entry.delete(0, 'end')
-            self.vendor_entry.insert(0, vals[1])
-            keys = ['Score', 'Need', 'Criticality', 'Installed', 'DisasterRecovery', 'Safety', 'Security', 'Monetary', 'CustomerService']
-            for i, key in enumerate(keys, start=2):
-                entry = self.factor_entries.get(key)
-                if entry is not None:
-                    entry.delete(0, 'end')
-                    # tree values are positional; prefer to fill from named DB row if available
-                    try:
-                        # attempt to fetch the application row from DB by id and use named fields
-                        app_row = database.get_application(app_id)
-                        if app_row and key.lower() in app_row.keys():
-                            entry.insert(0, app_row[key.lower()])
-                            continue
-                    except Exception:
-                        pass
-                    # fallback to treeview values
-                    entry.insert(0, vals[i])
+            # Load application record from DB and populate form fields (reliable source)
+            app_row = database.get_application(app_id)
+            # Name and vendor come from DB (preferred)
+            try:
+                self.name_entry.delete(0, 'end')
+                self.name_entry.insert(0, app_row['name'] if hasattr(app_row, 'keys') and 'name' in app_row.keys() else app_row[1])
+            except Exception:
+                pass
+            # try:
+            #     self.vendor_entry.delete(0, 'end')
+            #     self.vendor_entry.insert(0, app_row['vendor'] if hasattr(app_row, 'keys') and 'vendor' in app_row.keys() else app_row[2])
+            # except Exception:
+                pass
+
+        #     keys = ['Score', 'Need', 'Criticality', 'Installed', 'DisasterRecovery', 'Safety', 'Security', 'Monetary', 'CustomerService']
+        #     for key in keys:
+        #         entry = self.factor_entries.get(key)
+        #         if entry is not None:
+        #             entry.delete(0, 'end')
+        #             try:
+        #                 if app_row and hasattr(app_row, 'keys') and key.lower() in app_row.keys():
+        #                     entry.insert(0, app_row[key.lower()] or 0)
+        #                 else:
+        #                     # tuple fallback using known indices from applications query
+        #                     idx_map = {
+        #                         'Score': 3, 'Need': 4, 'Criticality': 5, 'Installed': 6, 'DisasterRecovery': 7,
+        #                         'Safety': 8, 'Security': 9, 'Monetary': 10, 'CustomerService': 11
+        #                     }
+        #                     val = app_row[idx_map[key]] if app_row and len(app_row) > idx_map[key] else 0
+        #                     entry.insert(0, val)
+        #             except Exception:
+        #                 entry.insert(0, 0)
         except Exception as e:
             messagebox.showerror('Error', f'Failed to load selected row for editing: {e}')
 
@@ -859,39 +854,51 @@ class AppTracker(tk.Tk):
             messagebox.showerror('Save', 'Could not determine application id for selected row.')
             return
         name = self.name_entry.get().strip()
-        vendor = self.vendor_entry.get().strip()
+        # vendor = self.vendor_entry.get().strip()
         fields = {}
-        try:
-            for key, entry in self.factor_entries.items():
-                fields[key.lower()] = int(entry.get())
-        except ValueError:
-            messagebox.showerror('Error', 'All factor fields must be integers.')
-            return
+        # try:
+        #     for key, entry in self.factor_entries.items():
+        #         fields[key.lower()] = int(entry.get())
+        # except ValueError:
+        #     messagebox.showerror('Error', 'All factor fields must be integers.')
+        #     return
         fields['name'] = name
-        fields['vendor'] = vendor
+        # fields['vendor'] = vendor
         # update db
         database.update_application(app_id, fields)
         self.refresh_table()
         
         # Clear form fields after saving
         self.name_entry.delete(0, 'end')
-        self.vendor_entry.delete(0, 'end')
-        for entry in self.factor_entries.values():
-            entry.delete(0, 'end')
+        # self.vendor_entry.delete(0, 'end')
+        # for entry in self.factor_entries.values():
+        #     entry.delete(0, 'end')
         self.department_listbox.selection_clear(0, tk.END)
         
         messagebox.showinfo('Saved', 'Changes saved.')
 
     def add_application(self):
         name = self.name_entry.get()
-        vendor = self.vendor_entry.get()
+        vendor = ""  # Default to empty string if vendor entry does not exist
+        # if hasattr(self, 'vendor_entry'):
+        #     try:
+        #         vendor = self.vendor_entry.get()
+        #     except Exception:
+        #         vendor = ""
+        # Build a safe factors dict. The form may not expose rating entries (they were commented out),
+        # so default missing ratings to 0.
         factors = {}
-        for label, entry in self.factor_entries.items():
+        rating_keys = ['Score', 'Need', 'Criticality', 'Installed', 'DisasterRecovery', 'Safety', 'Security', 'Monetary', 'CustomerService']
+        fe = getattr(self, 'factor_entries', {}) or {}
+        for key in rating_keys:
             try:
-                factors[label] = int(entry.get())
-            except ValueError:
-                messagebox.showerror('Error', f'{label} must be an integer.')
-                return
+                if key in fe and fe[key] is not None:
+                    val = fe[key].get().strip()
+                    factors[key] = int(val) if val != '' else 0
+                else:
+                    factors[key] = 0
+            except Exception:
+                factors[key] = 0
 
         selected_indices = self.department_listbox.curselection()
         if not selected_indices:
@@ -901,12 +908,6 @@ class AppTracker(tk.Tk):
         departments = self.get_departments()
         dept_ids = [departments[i][0] for i in selected_indices]
         last_mod = datetime.utcnow().isoformat()
-
-        ratings = {
-            'Score': factors['Score'], 'Need': factors['Need'], 'Criticality': factors['Criticality'],
-            'Installed': factors['Installed'], 'DisasterRecovery': factors['DisasterRecovery'], 'Safety': factors['Safety'],
-            'Security': factors['Security'], 'Monetary': factors['Monetary'], 'CustomerService': factors['CustomerService']
-        }
 
         # Use database helper to create application rows and links
         try:
@@ -919,9 +920,9 @@ class AppTracker(tk.Tk):
             messagebox.showerror('Error', 'Failed to create application entries.')
 
         self.name_entry.delete(0, tk.END)
-        self.vendor_entry.delete(0, tk.END)
-        for entry in self.factor_entries.values():
-            entry.delete(0, tk.END)
+        # self.vendor_entry.delete(0, tk.END)
+        # for entry in self.factor_entries.values():
+        #     entry.delete(0, tk.END)
         self.department_listbox.selection_clear(0, tk.END)
         self.refresh_table()
 
@@ -975,26 +976,30 @@ class AppTracker(tk.Tk):
         c.execute('''SELECT id, name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, notes, risk_score, last_modified FROM applications''')
         rows = []
         for app_row in c.fetchall():
-            # app_row may be sqlite3.Row (named) or tuple - calculate_business_risk handles both
+            # Determine app id reliably
             try:
-                app_id = int(app_row['id']) if isinstance(app_row, dict) or hasattr(app_row, 'keys') else int(app_row[0])
+                app_id = int(app_row['id']) if hasattr(app_row, 'keys') else int(app_row[0])
             except Exception:
                 app_id = int(app_row[0])
+
+            # Get business unit list for this app
             depts = database.get_app_departments(app_id)
+            # We'll display the first Business Unit (or comma-join if multiple)
             dept_str = ', '.join(depts)
+
+            # Compute risk_score for color/banding
             risk_score, risk_level = 0, 'Unknown'
             try:
                 risk_score, risk_level = database.calculate_business_risk(app_row)
             except Exception:
                 pass
 
-            # Get last_modified
+            # Get last_modified as date string
             last_mod_raw = None
             try:
                 if hasattr(app_row, 'keys'):
                     last_mod_raw = app_row.get('last_modified') or app_row.get('lastmodified')
                 else:
-                    # tuple-style where last_modified is at index 14
                     last_mod_raw = app_row[14] if len(app_row) > 14 else None
             except Exception:
                 last_mod_raw = None
@@ -1005,30 +1010,22 @@ class AppTracker(tk.Tk):
                 except Exception:
                     last_mod_display = str(last_mod_raw).split('T')[0]
 
-            # Build display row, using named access where possible
-            name = app_row['name'] if hasattr(app_row, 'keys') and 'name' in app_row.keys() else app_row[1]
-            vendor = app_row['vendor'] if hasattr(app_row, 'keys') and 'vendor' in app_row.keys() else app_row[2]
-            score = app_row['score'] if hasattr(app_row, 'keys') and 'score' in app_row.keys() else app_row[3]
-            need = app_row['need'] if hasattr(app_row, 'keys') and 'need' in app_row.keys() else app_row[4]
-            criticality = app_row['criticality'] if hasattr(app_row, 'keys') and 'criticality' in app_row.keys() else app_row[5]
-            installed = app_row['installed'] if hasattr(app_row, 'keys') and 'installed' in app_row.keys() else app_row[6]
-            dr = app_row['disaster_recovery'] if hasattr(app_row, 'keys') and 'disaster_recovery' in app_row.keys() else app_row[7]
-            safety = app_row['safety'] if hasattr(app_row, 'keys') and 'safety' in app_row.keys() else app_row[8]
-            security = app_row['security'] if hasattr(app_row, 'keys') and 'security' in app_row.keys() else app_row[9]
-            monetary = app_row['monetary'] if hasattr(app_row, 'keys') and 'monetary' in app_row.keys() else app_row[10]
-            cust_service = app_row['customer_service'] if hasattr(app_row, 'keys') and 'customer_service' in app_row.keys() else app_row[11]
+            # Division: use 'name' as the Division column (previously System column)
+            try:
+                division = app_row['name'] if hasattr(app_row, 'keys') and 'name' in app_row.keys() else app_row[1]
+            except Exception:
+                division = app_row[1]
 
-            row = (
-                name, vendor, score, need, criticality, installed, dr, safety, security, monetary, cust_service, dept_str, f"{risk_score} ({risk_level})", last_mod_display
-            )
-            
+            # User requested Business Unit first, then Division
+            row = (dept_str, division, last_mod_display)
+
             # Apply search filtering
             if search_text:
-                if search_type == "Name" and search_text.lower() not in app_row[1].lower():
+                if search_type == "Name" and search_text.lower() not in (division or '').lower():
                     continue
                 elif search_type == "Business Unit" and not any(search_text.lower() in dept.lower() for dept in depts):
                     continue
-                    
+
             rows.append((row, app_id, risk_score))
         # Sort rows by the 'System' column (index 0)
         rows.sort(key=lambda x: x[0][0].lower())
@@ -1062,12 +1059,19 @@ class AppTracker(tk.Tk):
                 # Set current parent system id for integrations
                 self.current_parent_system_id = self.selected_app_id
                 
-                # Update integrations title with selected system name and business unit
-                system_values = self.tree.item(item)['values']
-                system_name = system_values[0] if system_values else ""
-                business_unit = system_values[11] if len(system_values) > 11 else ""  # Business Unit is at index 11
+                # Update integrations title; fetch authoritative values from DB
+                app_row = database.get_application(self.selected_app_id)
+                try:
+                    system_name = app_row['name'] if hasattr(app_row, 'keys') and 'name' in app_row.keys() else app_row[1]
+                except Exception:
+                    system_name = ''
+                # Business unit(s)
+                depts = database.get_app_departments(self.selected_app_id)
+                business_unit = ', '.join(depts)
                 if system_name and business_unit:
                     self.integrations_title.configure(text=f"System Sub/Integrations - {system_name} - {business_unit}")
+                elif system_name:
+                    self.integrations_title.configure(text=f"System Sub/Integrations - {system_name}")
                 else:
                     self.integrations_title.configure(text="System Sub/Integrations")
             except Exception:
