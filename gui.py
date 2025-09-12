@@ -497,7 +497,7 @@ class AppTracker(tk.Tk):
         
         # factor entries with modern styling
         factor_labels = [
-            ('Stability', 2),
+            ('Score', 2),
             ('Need', 3),
             ('Criticality', 4),
             ('Installed', 5),
@@ -676,7 +676,7 @@ class AppTracker(tk.Tk):
         self.tree = ttk.Treeview(
             table_frame,
             columns=(
-                'System', 'Vendor', 'Stability', 'Need', 'Criticality', 'Installed',
+                'System', 'Vendor', 'Score', 'Need', 'Criticality', 'Installed',
                 'DisasterRecovery', 'Safety', 'Security', 'Monetary', 'CustomerService',
                 'Business Unit', 'Risk', 'Last Modified'
             ),
@@ -685,7 +685,7 @@ class AppTracker(tk.Tk):
         # column sizing: adjusted widths to ensure text fits better in cells
         cols = list(self.tree['columns'])
         base_widths = {
-            'System': 220, 'Vendor': 160, 'Stability': 80, 'Need': 80, 'Criticality': 90,
+            'System': 220, 'Vendor': 160, 'Score': 80, 'Need': 80, 'Criticality': 90,
             'Installed': 80, 'DisasterRecovery': 100, 'Safety': 80, 'Security': 80,
             'Monetary': 80, 'CustomerService': 140, 'Business Unit': 180, 'Risk': 80, 'Last Modified': 150
         }
@@ -738,8 +738,8 @@ class AppTracker(tk.Tk):
         self.integrations_tree = ttk.Treeview(
             integrations_frame,
             columns=(
-                'Name', 'Vendor', 'Stability', 'Need', 'Criticality', 'Installed',
-                'DR', 'Safety', 'Security', 'Monetary', 'CustomerService',
+                'Name', 'Vendor', 'Score', 'Need', 'Criticality', 'Installed',
+                    'DR', 'Safety', 'Security', 'Monetary', 'CustomerService',
                 'Risk', 'Last Modified'
             ),
             show='headings'
@@ -748,7 +748,7 @@ class AppTracker(tk.Tk):
         # Apply column settings to integrations table
         int_cols = list(self.integrations_tree['columns'])
         col_widths = {
-            'Name': 220, 'Vendor': 160, 'Stability': 80, 'Need': 80, 'Criticality': 90,
+            'Name': 220, 'Vendor': 160, 'Score': 80, 'Need': 80, 'Criticality': 90,
             'Installed': 80, 'DR': 80, 'Safety': 80, 'Security': 80,
             'Monetary': 80, 'CustomerService': 140, 'Risk': 80, 'Last Modified': 150
         }
@@ -825,7 +825,7 @@ class AppTracker(tk.Tk):
             self.name_entry.insert(0, vals[0])
             self.vendor_entry.delete(0, 'end')
             self.vendor_entry.insert(0, vals[1])
-            keys = ['Stability', 'Need', 'Criticality', 'Installed', 'DisasterRecovery', 'Safety', 'Security', 'Monetary', 'CustomerService']
+            keys = ['Score', 'Need', 'Criticality', 'Installed', 'DisasterRecovery', 'Safety', 'Security', 'Monetary', 'CustomerService']
             for i, key in enumerate(keys, start=2):
                 entry = self.factor_entries.get(key)
                 if entry is not None:
@@ -891,7 +891,7 @@ class AppTracker(tk.Tk):
         last_mod = datetime.utcnow().isoformat()
 
         ratings = {
-            'Stability': factors['Stability'], 'Need': factors['Need'], 'Criticality': factors['Criticality'],
+            'Score': factors['Score'], 'Need': factors['Need'], 'Criticality': factors['Criticality'],
             'Installed': factors['Installed'], 'DisasterRecovery': factors['DisasterRecovery'], 'Safety': factors['Safety'],
             'Security': factors['Security'], 'Monetary': factors['Monetary'], 'CustomerService': factors['CustomerService']
         }
@@ -913,9 +913,9 @@ class AppTracker(tk.Tk):
             for dept_id in dept_ids:
                 # Create new application entry
                 c.execute('''INSERT INTO applications (
-                    name, vendor, stability, need, criticality, installed, disasterrecovery, safety, security, monetary, customerservice, risk_score, last_modified
+                    name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, risk_score, last_modified
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                    (name, vendor, factors['Stability'], factors['Need'], factors['Criticality'], factors['Installed'], factors['DisasterRecovery'],
+                    (name, vendor, factors['Score'], factors['Need'], factors['Criticality'], factors['Installed'], factors['DisasterRecovery'],
                      factors['Safety'], factors['Security'], factors['Monetary'], factors['CustomerService'], risk_score, last_mod))
                 
                 app_id = c.lastrowid
@@ -990,7 +990,7 @@ class AppTracker(tk.Tk):
         if hasattr(self, 'search_type_var') and self.search_type_var is not None:
             search_type = self.search_type_var.get()
             
-        c.execute('''SELECT id, name, vendor, stability, need, criticality, installed, disasterrecovery, safety, security, monetary, customerservice, last_modified FROM applications''')
+        c.execute('''SELECT id, name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, last_modified FROM applications''')
         rows = []
         for app_row in c.fetchall():
             app_id = app_row[0]
@@ -1001,7 +1001,7 @@ class AppTracker(tk.Tk):
                 risk_score, risk_level = database.calculate_business_risk(app_row)
             except Exception:
                 pass
-            # app_row indices: 1:name,2:vendor,3:stability,4:need,5:criticality,6:installed,7:disasterrecovery,8:safety,9:security,10:monetary,11:customerservice
+            # app_row indices: 1:name,2:vendor,3:score,4:need,5:criticality,6:installed,7:disaster_recovery,8:safety,9:security,10:monetary,11:customer_service
             # Format last_modified as date-only (YYYY-MM-DD) for display
             last_mod_raw = app_row[12]
             last_mod_display = ''
@@ -1279,9 +1279,9 @@ class AppTracker(tk.Tk):
         
         # Factor entry fields (same as main form)
         factor_entries = {}
-        keys = ['Stability', 'Need', 'Criticality', 'Installed', 'DisasterRecovery', 
+        keys = ['Score', 'Need', 'Criticality', 'Installed', 'DisasterRecovery',
                 'Safety', 'Security', 'Monetary', 'CustomerService']
-        
+
         for idx, key in enumerate(keys, start=2):
             ttk.Label(form_frame, text=f'{key}:', anchor='e').grid(row=idx, column=0, sticky='e', pady=5, padx=5)
             entry = ttk.Entry(form_frame, width=5)
@@ -1566,7 +1566,7 @@ class AppTracker(tk.Tk):
                 
                 # Extract ratings values (indices 4-12 in SQL query)
                 ratings = []
-                for i in range(3, 12):  # stability through customerservice
+                for i in range(3, 12):  # score through customer_service
                     try:
                         if row[i] is not None:
                             ratings.append(int(row[i]))
@@ -1660,14 +1660,14 @@ class AppTracker(tk.Tk):
             
             # Factor entry fields
             factor_entries = {}
-            keys = ['Stability', 'Need', 'Criticality', 'Installed', 'DisasterRecovery', 
+            keys = ['Score', 'Need', 'Criticality', 'Installed', 'DisasterRecovery',
                     'Safety', 'Security', 'Monetary', 'CustomerService']
-            
+
             # Integration indices based on SQL query:
-            # id(0), parent_app_id(1), name(2), vendor(3), stability(4), need(5), criticality(6), installed(7), 
-            # disasterrecovery(8), safety(9), security(10), monetary(11), customerservice(12), notes(13), risk_score(14), last_modified(15)
+            # id(0), parent_app_id(1), name(2), vendor(3), score(4), need(5), criticality(6), installed(7),
+            # disaster_recovery(8), safety(9), security(10), monetary(11), customer_service(12), notes(13), risk_score(14), last_modified(15)
             factor_indices = {
-                'Stability': 4, 'Need': 5, 'Criticality': 6, 'Installed': 7, 'DisasterRecovery': 8,
+                'Score': 4, 'Need': 5, 'Criticality': 6, 'Installed': 7, 'DisasterRecovery': 8,
                 'Safety': 9, 'Security': 10, 'Monetary': 11, 'CustomerService': 12
             }
             

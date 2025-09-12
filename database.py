@@ -7,7 +7,7 @@ import math
 DB_NAME = 'business_apps.db'
 
 ATTRIBUTES = [
-    "Stability",
+    "Score",
     "Need",
     "Criticality",
     "Installed",
@@ -19,7 +19,7 @@ ATTRIBUTES = [
 ]
 
 DEFAULT_WEIGHTS = {
-    "Stability":         0.10,
+    "Score":             0.10,
     "Need":              0.10,
     "Criticality":       0.20,
     "Installed":         0.05,
@@ -107,15 +107,15 @@ def init_db():
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL,
             vendor TEXT,
-            stability INTEGER DEFAULT 0,
+            score INTEGER DEFAULT 0,
             need INTEGER DEFAULT 0,
             criticality INTEGER DEFAULT 0,
             installed INTEGER DEFAULT 0,
-            disasterrecovery INTEGER DEFAULT 0,
+            disaster_recovery INTEGER DEFAULT 0,
             safety INTEGER DEFAULT 0,
             security INTEGER DEFAULT 0,
             monetary INTEGER DEFAULT 0,
-            customerservice INTEGER DEFAULT 0,
+            customer_service INTEGER DEFAULT 0,
             notes TEXT,
             user_id INTEGER,
             risk_score REAL,
@@ -125,7 +125,7 @@ def init_db():
         # table exists: ensure factor columns, vendor, and last_modified exist
         c.execute("PRAGMA table_info(applications)")
         columns = [col[1].lower() for col in c.fetchall()]
-        factor_columns = ['stability', 'need', 'criticality', 'installed', 'disasterrecovery', 'safety', 'security', 'monetary', 'customerservice']
+        factor_columns = ['score', 'need', 'criticality', 'installed', 'disaster_recovery', 'safety', 'security', 'monetary', 'customer_service']
         for col in factor_columns:
             if col not in columns:
                 c.execute(f'ALTER TABLE applications ADD COLUMN {col} INTEGER DEFAULT 0')
@@ -133,6 +133,45 @@ def init_db():
             c.execute('ALTER TABLE applications ADD COLUMN vendor TEXT')
         if 'last_modified' not in columns:
             c.execute("ALTER TABLE applications ADD COLUMN last_modified TEXT")
+        # Rename column 'stability' to 'score' in the 'applications' table if it exists
+        c.execute("PRAGMA table_info(applications)")
+        columns = [col[1].lower() for col in c.fetchall()]
+        if 'stability' in columns and 'score' not in columns:
+            c.execute("ALTER TABLE applications RENAME COLUMN stability TO score")
+        # If 'stability' still exists, remove it by rebuilding the table without that column
+        c.execute("PRAGMA table_info(applications)")
+        cols_info = c.fetchall()
+        col_names_lower = [col[1].lower() for col in cols_info]
+        if 'stability' in col_names_lower:
+            # Build column defs for new table excluding 'stability'
+            cols_keep = [col for col in cols_info if col[1].lower() != 'stability']
+            col_defs = []
+            for col in cols_keep:
+                name = col[1]
+                typ = col[2] or 'TEXT'
+                notnull = ' NOT NULL' if col[3] else ''
+                dflt = f" DEFAULT {col[4]}" if col[4] is not None else ''
+                pk = ' PRIMARY KEY' if col[5] else ''
+                # handle common INTEGER PRIMARY KEY AUTOINCREMENT pattern
+                if col[5] and typ.upper() == 'INTEGER':
+                    col_defs.append(f"{name} {typ}{pk}{dflt}")
+                else:
+                    col_defs.append(f"{name} {typ}{notnull}{dflt}{pk}")
+            cols_sql = ', '.join(col_defs)
+            # Create a new table, copy data, and replace old table
+            c.execute(f"CREATE TABLE IF NOT EXISTS applications_new ({cols_sql})")
+            keep_names = ', '.join([f'{col[1]}' for col in cols_keep])
+            c.execute(f"INSERT INTO applications_new ({keep_names}) SELECT {keep_names} FROM applications")
+            c.execute("DROP TABLE applications")
+            c.execute("ALTER TABLE applications_new RENAME TO applications")
+            # Refresh PRAGMA info
+            c.execute("PRAGMA table_info(applications)")
+            cols_info = c.fetchall()
+            columns = [col[1].lower() for col in cols_info]
+            if 'stability' in columns:
+                raise RuntimeError("Migration failed: 'stability' column still exists")
+            print("DEBUG: Migration complete, 'stability' column removed from applications table")
+
     c.execute('''CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         username TEXT NOT NULL UNIQUE
@@ -155,35 +194,178 @@ def init_db():
         parent_app_id INTEGER NOT NULL,
         name TEXT NOT NULL,
         vendor TEXT,
-        stability INTEGER DEFAULT 0,
+        score INTEGER DEFAULT 0,
         need INTEGER DEFAULT 0,
         criticality INTEGER DEFAULT 0,
         installed INTEGER DEFAULT 0,
-        disasterrecovery INTEGER DEFAULT 0,
+        disaster_recovery INTEGER DEFAULT 0,
         safety INTEGER DEFAULT 0,
         security INTEGER DEFAULT 0,
         monetary INTEGER DEFAULT 0,
-        customerservice INTEGER DEFAULT 0,
+        customer_service INTEGER DEFAULT 0,
         notes TEXT,
         risk_score REAL,
         last_modified TEXT,
         FOREIGN KEY(parent_app_id) REFERENCES applications(id)
     )''')
+    # Rename column 'stability' to 'score' in the 'system_integrations' table if it exists
+    c.execute("PRAGMA table_info(system_integrations)")
+    sys_cols = [col[1].lower() for col in c.fetchall()]
+    if 'stability' in sys_cols and 'score' not in sys_cols:
+        try:
+            c.execute("ALTER TABLE system_integrations RENAME COLUMN stability TO score")
+            print("DEBUG: Renamed system_integrations.stability -> score")
+        except Exception:
+            # If RENAME COLUMN not supported, rebuild table with 'score' instead of 'stability'
+            c.execute("PRAGMA table_info(system_integrations)")
+            cols_info = c.fetchall()
+            cols_keep = []
+            for col in cols_info:
+                if col[1].lower() == 'stability':
+                    # convert entry to 'score' with same defs
+                    cols_keep.append((col[0], 'score', col[2], col[3], col[4], col[5]))
+                else:
+                    cols_keep.append(col)
+            col_defs = []
+            for col in cols_keep:
+                name = col[1]
+                typ = col[2] or 'TEXT'
+                notnull = ' NOT NULL' if col[3] else ''
+                dflt = f" DEFAULT {col[4]}" if col[4] is not None else ''
+                pk = ' PRIMARY KEY' if col[5] else ''
+                if col[5] and typ.upper() == 'INTEGER':
+                    col_defs.append(f"{name} {typ}{pk}{dflt}")
+                else:
+                    col_defs.append(f"{name} {typ}{notnull}{dflt}{pk}")
+            cols_sql = ', '.join(col_defs)
+            c.execute(f"CREATE TABLE IF NOT EXISTS system_integrations_new ({cols_sql})")
+            keep_names = ', '.join([f'{col[1]}' for col in cols_keep])
+            # map stability -> score in select
+            select_cols = []
+            for col in cols_info:
+                if col[1].lower() == 'stability':
+                    select_cols.append('stability AS score')
+                else:
+                    select_cols.append(col[1])
+            select_sql = ', '.join(select_cols)
+            c.execute(f"INSERT INTO system_integrations_new ({keep_names}) SELECT {select_sql} FROM system_integrations")
+            c.execute("DROP TABLE system_integrations")
+            c.execute("ALTER TABLE system_integrations_new RENAME TO system_integrations")
+            print("DEBUG: Rebuilt system_integrations with 'score' column (from stability)")
+    else:
+        # If stability isn't present but score is missing, add score column
+        if 'score' not in sys_cols:
+            c.execute("ALTER TABLE system_integrations ADD COLUMN score INTEGER DEFAULT 0")
+            print("DEBUG: Added 'score' column to system_integrations (default 0)")
+
+    # Consolidate duplicate/legacy columns into canonical snake_case names
+    # Mapping: canonical -> legacy
+    consolidate_map = {
+        'disaster_recovery': 'disasterrecovery',
+        'customer_service': 'customerservice'
+    }
+
+    def _consolidate_table(table_name):
+        c.execute(f"PRAGMA table_info({table_name})")
+        cols_info = c.fetchall()
+        cols = [col[1].lower() for col in cols_info]
+        needs_rebuild = False
+        for canonical, legacy in consolidate_map.items():
+            if legacy in cols and canonical in cols:
+                # copy legacy values into canonical where canonical is NULL or empty
+                try:
+                    # Try numeric/text-agnostic update using COALESCE
+                    c.execute(f"UPDATE {table_name} SET {canonical} = CASE WHEN ({canonical} IS NULL OR {canonical} = '') THEN {legacy} ELSE {canonical} END")
+                except Exception:
+                    # fallback: try without empty-string check
+                    c.execute(f"UPDATE {table_name} SET {canonical} = CASE WHEN ({canonical} IS NULL) THEN {legacy} ELSE {canonical} END")
+                needs_rebuild = True
+            elif legacy in cols and canonical not in cols:
+                # rename legacy -> canonical if possible
+                try:
+                    c.execute(f"ALTER TABLE {table_name} RENAME COLUMN {legacy} TO {canonical}")
+                    print(f"DEBUG: Renamed {table_name}.{legacy} -> {canonical}")
+                except Exception:
+                    # rebuild table mapping legacy AS canonical
+                    c.execute(f"PRAGMA table_info({table_name})")
+                    cols_info = c.fetchall()
+                    cols_keep = []
+                    for col in cols_info:
+                        if col[1].lower() == legacy:
+                            cols_keep.append((col[0], canonical, col[2], col[3], col[4], col[5]))
+                        else:
+                            cols_keep.append(col)
+                    col_defs = []
+                    for col in cols_keep:
+                        name = col[1]
+                        typ = col[2] or 'TEXT'
+                        notnull = ' NOT NULL' if col[3] else ''
+                        dflt = f" DEFAULT {col[4]}" if col[4] is not None else ''
+                        pk = ' PRIMARY KEY' if col[5] else ''
+                        if col[5] and typ.upper() == 'INTEGER':
+                            col_defs.append(f"{name} {typ}{pk}{dflt}")
+                        else:
+                            col_defs.append(f"{name} {typ}{notnull}{dflt}{pk}")
+                    cols_sql = ', '.join(col_defs)
+                    c.execute(f"CREATE TABLE IF NOT EXISTS {table_name}_new ({cols_sql})")
+                    keep_names = ', '.join([f'{col[1]}' for col in cols_keep])
+                    select_cols = []
+                    for col in cols_info:
+                        if col[1].lower() == legacy:
+                            select_cols.append(f"{legacy} AS {canonical}")
+                        else:
+                            select_cols.append(col[1])
+                    select_sql = ', '.join(select_cols)
+                    c.execute(f"INSERT INTO {table_name}_new ({keep_names}) SELECT {select_sql} FROM {table_name}")
+                    c.execute(f"DROP TABLE {table_name}")
+                    c.execute(f"ALTER TABLE {table_name}_new RENAME TO {table_name}")
+                    print(f"DEBUG: Rebuilt {table_name} with {legacy} renamed to {canonical}")
+                    return
+                    
+        # If both canonical existed and we copied values from legacy, drop legacy columns by rebuilding
+        if needs_rebuild:
+            c.execute(f"PRAGMA table_info({table_name})")
+            cols_info = c.fetchall()
+            # remove legacy columns from cols_info
+            cols_keep = [col for col in cols_info if col[1].lower() not in consolidate_map.values()]
+            col_defs = []
+            for col in cols_keep:
+                name = col[1]
+                typ = col[2] or 'TEXT'
+                notnull = ' NOT NULL' if col[3] else ''
+                dflt = f" DEFAULT {col[4]}" if col[4] is not None else ''
+                pk = ' PRIMARY KEY' if col[5] else ''
+                if col[5] and typ.upper() == 'INTEGER':
+                    col_defs.append(f"{name} {typ}{pk}{dflt}")
+                else:
+                    col_defs.append(f"{name} {typ}{notnull}{dflt}{pk}")
+            cols_sql = ', '.join(col_defs)
+            c.execute(f"CREATE TABLE IF NOT EXISTS {table_name}_new ({cols_sql})")
+            keep_names = ', '.join([f'{col[1]}' for col in cols_keep])
+            c.execute(f"INSERT INTO {table_name}_new ({keep_names}) SELECT {keep_names} FROM {table_name}")
+            c.execute(f"DROP TABLE {table_name}")
+            c.execute(f"ALTER TABLE {table_name}_new RENAME TO {table_name}")
+            print(f"DEBUG: Consolidated legacy columns on {table_name} and removed duplicates")
+
+    # Run consolidation for target tables
+    _consolidate_table('applications')
+    _consolidate_table('system_integrations')
+
     conn.commit()
     conn.close()
 
 def calculate_business_risk(app_row):
-    # app_row order: id, name, vendor, Stability, Need, Criticality, DisasterRecovery, Safety, Security, Monetary, CustomerService
+    # app_row order: id, name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, last_modified
     ratings = {
-        "Stability": app_row[3],
+        "Score": app_row[3],
         "Need": app_row[4],
         "Criticality": app_row[5],
-    "Installed": app_row[6],
-    "DisasterRecovery": app_row[7],
-    "Safety": app_row[8],
-    "Security": app_row[9],
-    "Monetary": app_row[10],
-    "CustomerService": app_row[11],
+        "Installed": app_row[6],
+        "DisasterRecovery": app_row[7],
+        "Safety": app_row[8],
+        "Security": app_row[9],
+        "Monetary": app_row[10],
+        "CustomerService": app_row[11],
     }
     result = score_application(ratings)
     return result.total, result.priority
@@ -209,7 +391,7 @@ def get_app_departments(app_id):
 def get_application(app_id):
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute('''SELECT id, name, vendor, stability, need, criticality, installed, disasterrecovery, safety, security, monetary, customerservice, notes, risk_score, last_modified
+    c.execute('''SELECT id, name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, notes, risk_score, last_modified
                  FROM applications WHERE id = ?''', (app_id,))
     row = c.fetchone()
     conn.close()
@@ -219,7 +401,7 @@ def get_application(app_id):
 def update_application(app_id, fields: Dict[str, object]):
     if not fields:
         return
-    allowed = {'name', 'vendor', 'stability', 'need', 'criticality', 'installed', 'disasterrecovery', 'safety', 'security', 'monetary', 'customerservice', 'notes', 'risk_score'}
+    allowed = {'name', 'vendor', 'score', 'need', 'criticality', 'installed', 'disaster_recovery', 'safety', 'security', 'monetary', 'customer_service', 'notes', 'risk_score'}
     set_parts = []
     values = []
     for k, v in fields.items():
@@ -255,8 +437,8 @@ def add_system_integration(parent_app_id, fields: Dict[str, object]):
     if 'name' not in fields or not fields['name']:
         return None
     
-    allowed_fields = {'name', 'vendor', 'stability', 'need', 'criticality', 'installed', 
-                      'disasterrecovery', 'safety', 'security', 'monetary', 'customerservice',
+    allowed_fields = {'name', 'vendor', 'score', 'need', 'criticality', 'installed', 
+                      'disaster_recovery', 'safety', 'security', 'monetary', 'customer_service',
                       'notes', 'risk_score'}
     
     field_keys = []
@@ -289,10 +471,10 @@ def get_system_integrations(parent_app_id):
     """Get all system integrations for a parent application"""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute('''SELECT id, name, vendor, stability, need, criticality, installed, 
-                 disasterrecovery, safety, security, monetary, customerservice, 
+    c.execute('''SELECT id, parent_app_id, name, vendor, score, need, criticality, installed,
+                 disaster_recovery, safety, security, monetary, customer_service,
                  notes, risk_score, last_modified
-                 FROM system_integrations 
+                 FROM system_integrations
                  WHERE parent_app_id = ?
                  ORDER BY name''', (parent_app_id,))
     integrations = c.fetchall()
@@ -303,8 +485,8 @@ def get_system_integration(integration_id):
     """Get a specific system integration by ID"""
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    c.execute('''SELECT id, parent_app_id, name, vendor, stability, need, criticality, installed, 
-                 disasterrecovery, safety, security, monetary, customerservice, 
+    c.execute('''SELECT id, parent_app_id, name, vendor, score, need, criticality, installed, 
+                 disaster_recovery, safety, security, monetary, customer_service, 
                  notes, risk_score, last_modified
                  FROM system_integrations 
                  WHERE id = ?''', (integration_id,))
@@ -317,8 +499,8 @@ def update_system_integration(integration_id, fields: Dict[str, object]):
     if not fields:
         return
     
-    allowed = {'name', 'vendor', 'stability', 'need', 'criticality', 'installed', 
-               'disasterrecovery', 'safety', 'security', 'monetary', 'customerservice', 
+    allowed = {'name', 'vendor', 'score', 'need', 'criticality', 'installed', 
+               'disaster_recovery', 'safety', 'security', 'monetary', 'customer_service', 
                'notes', 'risk_score'}
     
     set_parts = []
