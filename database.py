@@ -6,94 +6,34 @@ import math
 
 DB_NAME = 'business_apps.db'
 
-ATTRIBUTES = [
-    "Score",
-    "Need",
-    "Criticality",
-    "Installed",
-    "DisasterRecovery",
-    "Safety",
-    "Security",
-    "Monetary",
-    "CustomerService",
-]
 
-DEFAULT_WEIGHTS = {
-    "Score":             0.10,
-    "Need":              0.10,
-    "Criticality":       0.20,
-    "Installed":         0.05,
-    "DisasterRecovery":  0.15,
-    "Safety":            0.15,
-    "Security":          0.15,
-    "Monetary":          0.10,
-    "CustomerService":   0.05,
-}
-
-@dataclass(frozen=True)
-class DRScoreResult:
-    total: float
-    priority: str
-    breakdown: Dict[str, float]
-    ratings: Dict[str, int]
-    weights: Dict[str, float]
-
-def _normalize_weights(weights: Dict[str, float]) -> Dict[str, float]:
-    unknown = set(weights).difference(ATTRIBUTES)
-    if unknown:
-        raise ValueError(f"Unknown weight keys: {sorted(unknown)}")
-    w = {k: float(weights.get(k, 0.0)) for k in ATTRIBUTES}
-    total = sum(w.values())
-    if total <= 0:
-        raise ValueError("Sum of weights must be > 0")
-    return {k: v / total for k, v in w.items()}
-
-def _validate_ratings(ratings: Dict[str, int]) -> Dict[str, int]:
-    missing = [k for k in ATTRIBUTES if k not in ratings]
-    if missing:
-        raise ValueError(f"Missing ratings for: {missing}")
-    unknown = set(ratings).difference(ATTRIBUTES)
-    if unknown:
-        raise ValueError(f"Unknown rating keys: {sorted(unknown)}")
-    clean = {}
-    for k, v in ratings.items():
-        if not isinstance(v, (int, float)) or math.isnan(float(v)):
-            raise ValueError(f"Rating for {k} must be a number 1..10")
-        iv = int(round(float(v)))
-        if not (1 <= iv <= 10):
-            raise ValueError(f"Rating for {k} must be in 1..10 (got {v})")
-        clean[k] = iv
-    return clean
+def _to_int_safe(x, default=0):
+    try:
+        return int(float(x))
+    except Exception:
+        return default
 
 def dr_priority_band(total_score: float) -> str:
-    if total_score >= 8.5:
-        return "Critical"
-    if total_score >= 7.0:
+    # Map priority bands to the numeric risk score (0-100) used by the app.
+    # New bands: Low: 1-49, Med: 50-69, High: 70-100
+    try:
+        score = float(total_score)
+    except Exception:
+        return "Low"
+
+    if score >= 70:
         return "High"
-    if total_score >= 5.5:
-        return "Medium"
+    if score >= 50:
+        return "Med"
+    # treat 0 and any non-positive values as Low
     return "Low"
 
-def score_application(
-    ratings: Dict[str, int],
-    weights: Optional[Dict[str, float]] = None,
-) -> DRScoreResult:
-    clean_ratings = _validate_ratings(ratings)
-    normalized_weights = _normalize_weights(weights or DEFAULT_WEIGHTS)
-    breakdown: Dict[str, float] = {}
-    total = 0.0
-    for k in ATTRIBUTES:
-        contrib = clean_ratings[k] * normalized_weights[k]
-        breakdown[k] = round(contrib, 4)
-        total += contrib
-    total = round(total, 2)
-    return DRScoreResult(
-        total=total,
-        priority=dr_priority_band(total),
-        breakdown=breakdown,
-        ratings=clean_ratings,
-        weights=normalized_weights,
-    )
+
+def connect_db():
+    """Return a sqlite3 connection with Row factory for named access."""
+    conn = sqlite3.connect(DB_NAME)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 def init_db():
     conn = sqlite3.connect(DB_NAME)
@@ -355,24 +295,33 @@ def init_db():
     conn.close()
 
 def calculate_business_risk(app_row):
-    # app_row order: id, name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, last_modified
-    ratings = {
-        "Score": app_row[3],
-        "Need": app_row[4],
-        "Criticality": app_row[5],
-        "Installed": app_row[6],
-        "DisasterRecovery": app_row[7],
-        "Safety": app_row[8],
-        "Security": app_row[9],
-        "Monetary": app_row[10],
-        "CustomerService": app_row[11],
-    }
-    result = score_application(ratings)
-    return result.total, result.priority
+    """Compute risk for an application row-like object.
+
+    Supports sqlite3.Row (named access) or legacy tuple access by index.
+    Returns (risk_score, priority_band).
+    """
+    def _get(row, key, idx, default=0):
+        try:
+            # try dict-like/key access first
+            if row is None:
+                return default
+            return _to_int_safe(row[key], default)
+        except Exception:
+            try:
+                return _to_int_safe(row[idx], default)
+            except Exception:
+                return default
+
+    score = _get(app_row, 'score', 3, 0)
+    criticality = _get(app_row, 'criticality', 5, 0)
+
+    computed_risk = (10 - score) * criticality
+    priority = dr_priority_band(computed_risk)
+    return computed_risk, priority
 
 def link_app_to_departments(app_id, dept_ids):
     print(f"DEBUG: Linking app_id {app_id} to dept_ids {dept_ids}")
-    conn = sqlite3.connect(DB_NAME)
+    conn = connect_db()
     c = conn.cursor()
     for dept_id in dept_ids:
         c.execute('INSERT OR IGNORE INTO application_business_units (app_id, unit_id) VALUES (?, ?)', (app_id, dept_id))
@@ -380,7 +329,7 @@ def link_app_to_departments(app_id, dept_ids):
     conn.close()
 
 def get_app_departments(app_id):
-    conn = sqlite3.connect(DB_NAME)
+    conn = connect_db()
     c = conn.cursor()
     c.execute('SELECT d.name FROM business_units d JOIN application_business_units ad ON d.id = ad.unit_id WHERE ad.app_id = ?', (app_id,))
     depts = [row[0] for row in c.fetchall()]
@@ -389,7 +338,7 @@ def get_app_departments(app_id):
 
 
 def get_application(app_id):
-    conn = sqlite3.connect(DB_NAME)
+    conn = connect_db()
     c = conn.cursor()
     c.execute('''SELECT id, name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, notes, risk_score, last_modified
                  FROM applications WHERE id = ?''', (app_id,))
@@ -404,24 +353,86 @@ def update_application(app_id, fields: Dict[str, object]):
     allowed = {'name', 'vendor', 'score', 'need', 'criticality', 'installed', 'disaster_recovery', 'safety', 'security', 'monetary', 'customer_service', 'notes', 'risk_score'}
     set_parts = []
     values = []
+
+    # normalize provided fields
+    provided = {k.lower(): v for k, v in fields.items()}
+
     for k, v in fields.items():
         key = k.lower()
         if key in allowed:
             set_parts.append(f"{key} = ?")
             values.append(v)
+
+    # If caller didn't include risk_score, compute it using current values and provided overrides
+    if 'risk_score' not in provided:
+        conn = connect_db()
+        c = conn.cursor()
+        c.execute('SELECT score, criticality FROM applications WHERE id = ?', (app_id,))
+        cur = c.fetchone()
+        conn.close()
+
+        existing_score = _to_int_safe(cur[0] if cur and cur[0] is not None else 0, 0)
+        existing_crit = _to_int_safe(cur[1] if cur and cur[1] is not None else 0, 0)
+
+        score_val = _to_int_safe(provided.get('score', existing_score) or existing_score, existing_score)
+        crit_val = _to_int_safe(provided.get('criticality', existing_crit) or existing_crit, existing_crit)
+
+        computed_risk = (10 - score_val) * crit_val
+        set_parts.append('risk_score = ?')
+        values.append(computed_risk)
+
     # update last_modified
     set_parts.append('last_modified = ?')
     values.append(datetime.utcnow().isoformat())
     values.append(app_id)
-    conn = sqlite3.connect(DB_NAME)
+    conn = connect_db()
     c = conn.cursor()
     sql = f"UPDATE applications SET {', '.join(set_parts)} WHERE id = ?"
     c.execute(sql, tuple(values))
     conn.commit()
     conn.close()
+    return True
+
+
+def add_application(name: str, vendor: str, factors: Dict[str, int], dept_ids: list, notes: str = ''):
+    """Add an application and link it to business units. Returns list of created app ids."""
+    conn = connect_db()
+    c = conn.cursor()
+    # compute risk_score using (10 - score) * criticality
+    score_val = _to_int_safe(factors.get('Score', factors.get('score', 0)), 0)
+    crit_val = _to_int_safe(factors.get('Criticality', factors.get('criticality', 0)), 0)
+    computed_risk = (10 - score_val) * crit_val
+    last_mod = datetime.utcnow().isoformat()
+
+    app_ids = []
+    for dept_id in dept_ids:
+        c.execute('''INSERT INTO applications (name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, notes, risk_score, last_modified)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                  (
+                      name, vendor,
+                      _to_int_safe(factors.get('Score', factors.get('score', 0)), 0),
+                      _to_int_safe(factors.get('Need', factors.get('need', 0)), 0),
+                      _to_int_safe(factors.get('Criticality', factors.get('criticality', 0)), 0),
+                      _to_int_safe(factors.get('Installed', factors.get('installed', 0)), 0),
+                      _to_int_safe(factors.get('DisasterRecovery', factors.get('disaster_recovery', factors.get('disasterrecovery', 0))), 0),
+                      _to_int_safe(factors.get('Safety', factors.get('safety', 0)), 0),
+                      _to_int_safe(factors.get('Security', factors.get('security', 0)), 0),
+                      _to_int_safe(factors.get('Monetary', factors.get('monetary', 0)), 0),
+                      _to_int_safe(factors.get('CustomerService', factors.get('customer_service', 0)), 0),
+                      notes,
+                      computed_risk,
+                      last_mod
+                  ))
+        app_id = c.lastrowid
+        app_ids.append(app_id)
+        c.execute('INSERT OR IGNORE INTO application_business_units (app_id, unit_id) VALUES (?, ?)', (app_id, dept_id))
+
+    conn.commit()
+    conn.close()
+    return app_ids
 
 def purge_database():
-    conn = sqlite3.connect(DB_NAME)
+    conn = connect_db()
     c = conn.cursor()
     c.execute('DELETE FROM system_integrations')
     c.execute('DELETE FROM application_business_units')
@@ -444,20 +455,32 @@ def add_system_integration(parent_app_id, fields: Dict[str, object]):
     field_keys = []
     field_placeholders = []
     values = [parent_app_id]
-    
+
+    # normalize provided fields for easier lookup
+    provided = {k.lower(): v for k, v in fields.items()}
+
     for k, v in fields.items():
         key = k.lower()
         if key in allowed_fields:
             field_keys.append(key)
             field_placeholders.append('?')
             values.append(v)
-    
+
+    # If caller didn't provide risk_score, compute it using formula: (10 - score) * criticality
+    if 'risk_score' not in field_keys:
+        score_val = _to_int_safe(provided.get('score', 0) or 0, 0)
+        crit_val = _to_int_safe(provided.get('criticality', 0) or 0, 0)
+        computed_risk = (10 - score_val) * crit_val
+        field_keys.append('risk_score')
+        field_placeholders.append('?')
+        values.append(computed_risk)
+
     # Always add last_modified
     field_keys.append('last_modified')
     field_placeholders.append('?')
     values.append(datetime.utcnow().isoformat())
     
-    conn = sqlite3.connect(DB_NAME)
+    conn = connect_db()
     c = conn.cursor()
     sql = f"INSERT INTO system_integrations (parent_app_id, {', '.join(field_keys)}) VALUES (?, {', '.join(field_placeholders)})"
     c.execute(sql, tuple(values))
@@ -469,7 +492,7 @@ def add_system_integration(parent_app_id, fields: Dict[str, object]):
 
 def get_system_integrations(parent_app_id):
     """Get all system integrations for a parent application"""
-    conn = sqlite3.connect(DB_NAME)
+    conn = connect_db()
     c = conn.cursor()
     c.execute('''SELECT id, parent_app_id, name, vendor, score, need, criticality, installed,
                  disaster_recovery, safety, security, monetary, customer_service,
@@ -483,7 +506,7 @@ def get_system_integrations(parent_app_id):
 
 def get_system_integration(integration_id):
     """Get a specific system integration by ID"""
-    conn = sqlite3.connect(DB_NAME)
+    conn = connect_db()
     c = conn.cursor()
     c.execute('''SELECT id, parent_app_id, name, vendor, score, need, criticality, installed, 
                  disaster_recovery, safety, security, monetary, customer_service, 
@@ -497,7 +520,7 @@ def get_system_integration(integration_id):
 def update_system_integration(integration_id, fields: Dict[str, object]):
     """Update a system integration record"""
     if not fields:
-        return
+        return False
     
     allowed = {'name', 'vendor', 'score', 'need', 'criticality', 'installed', 
                'disaster_recovery', 'safety', 'security', 'monetary', 'customer_service', 
@@ -505,28 +528,52 @@ def update_system_integration(integration_id, fields: Dict[str, object]):
     
     set_parts = []
     values = []
-    
+
+    # normalize provided fields
+    provided = {k.lower(): v for k, v in fields.items()}
+
     for k, v in fields.items():
         key = k.lower()
         if key in allowed:
             set_parts.append(f"{key} = ?")
             values.append(v)
-    
+
+    # If caller didn't include risk_score, compute it using current values and provided overrides
+    if 'risk_score' not in provided:
+        # fetch current row to get existing score/criticality
+        conn = connect_db()
+        c = conn.cursor()
+        c.execute('SELECT score, criticality FROM system_integrations WHERE id = ?', (integration_id,))
+        cur = c.fetchone()
+        conn.close()
+
+        existing_score = _to_int_safe(cur[0] if cur and cur[0] is not None else 0, 0)
+        existing_crit = _to_int_safe(cur[1] if cur and cur[1] is not None else 0, 0)
+
+        # overrides from provided
+        score_val = _to_int_safe(provided.get('score', existing_score) or existing_score, existing_score)
+        crit_val = _to_int_safe(provided.get('criticality', existing_crit) or existing_crit, existing_crit)
+
+        computed_risk = (10 - score_val) * crit_val
+        set_parts.append('risk_score = ?')
+        values.append(computed_risk)
+
     # update last_modified
     set_parts.append('last_modified = ?')
     values.append(datetime.utcnow().isoformat())
     values.append(integration_id)
-    
-    conn = sqlite3.connect(DB_NAME)
+
+    conn = connect_db()
     c = conn.cursor()
     sql = f"UPDATE system_integrations SET {', '.join(set_parts)} WHERE id = ?"
     c.execute(sql, tuple(values))
     conn.commit()
     conn.close()
+    return True
 
 def delete_system_integration(integration_id):
     """Delete a system integration record"""
-    conn = sqlite3.connect(DB_NAME)
+    conn = connect_db()
     c = conn.cursor()
     c.execute('DELETE FROM system_integrations WHERE id = ?', (integration_id,))
     conn.commit()

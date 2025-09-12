@@ -14,12 +14,20 @@ HEADER_FG = 'white'      # header foreground
 
 
 def get_risk_color(score):
-    if score >= 8:
-        return 'red'
-    elif score >= 4:
-        return 'yellow'
-    else:
+    """Map numeric risk score to color tags using new bands:
+    Low: 1-49 -> green, Med: 50-69 -> yellow, High: 70-100 -> red
+    """
+    try:
+        s = float(score)
+    except Exception:
         return 'green'
+
+    if s >= 70:
+        return 'red'
+    if s >= 50:
+        return 'yellow'
+    # treat 0 and negatives as Low/green
+    return 'green'
 
 class AppTracker(tk.Tk):
     def __init__(self):
@@ -103,7 +111,7 @@ class AppTracker(tk.Tk):
         style.map('Success.TButton', background=[('active', '!disabled', '#7CCD7C')], foreground=[('disabled', '#a0a0a0')])
 
     def get_departments(self):
-        conn = database.sqlite3.connect(database.DB_NAME)
+        conn = database.connect_db()
         c = conn.cursor()
         c.execute('SELECT id, name FROM business_units ORDER BY name ASC')
         departments = c.fetchall()
@@ -122,7 +130,7 @@ class AppTracker(tk.Tk):
             dept_name = dept_entry.get().strip()
             if not dept_name:
                 return
-            conn = database.sqlite3.connect(database.DB_NAME)
+            conn = database.connect_db()
             c = conn.cursor()
             c.execute('INSERT OR IGNORE INTO business_units (name) VALUES (?)', (dept_name,))
             conn.commit()
@@ -189,7 +197,7 @@ class AppTracker(tk.Tk):
             widget.destroy()
             
         # Get system data from database
-        conn = database.sqlite3.connect(database.DB_NAME)
+        conn = database.connect_db()
         c = conn.cursor()
         c.execute('''SELECT name, criticality, risk_score 
                      FROM applications 
@@ -312,7 +320,7 @@ class AppTracker(tk.Tk):
         chart_frame.pack(fill='both', expand=True, padx=15, pady=5)
         
         # Populate business unit data
-        conn = database.sqlite3.connect(database.DB_NAME)
+        conn = database.connect_db()
         c = conn.cursor()
         # Aggregate by business unit using the correct business_units relationship
         c.execute('''SELECT bu.name, COUNT(abu.app_id), AVG(a.risk_score)
@@ -324,32 +332,38 @@ class AppTracker(tk.Tk):
             if avg_risk is None:
                 status = 'No Data'
                 color = 'white'
-            elif avg_risk > 8:  # Adjusted threshold to match risk_color function
-                status = 'Critical'
-                color = '#ffcccc'
-            elif avg_risk > 4:  # Adjusted threshold to match risk_color function
-                status = 'Warning'
-                color = '#fff2cc'
             else:
-                status = 'Safe'
-                color = '#ccffcc'
+                try:
+                    avg = float(avg_risk)
+                except Exception:
+                    avg = 0.0
+                # Map into Low/Med/High using new bands
+                if avg >= 70:
+                    status = 'High'
+                    color = '#ffcccc'
+                elif avg >= 50:
+                    status = 'Med'
+                    color = '#fff2cc'
+                else:
+                    status = 'Low'
+                    color = '#ccffcc'
             bu_tree.insert('', 'end', values=(bu_name, count, f'{avg_risk:.1f}' if avg_risk else '0', status), tags=(status,))
             bu_tree.tag_configure(status, background=color)
-            
+
         # Add styling to the report tree
         tree_style = ttk.Style()
         tree_style.configure('Treeview', rowheight=28, font=('Segoe UI', 9))
         tree_style.configure('Treeview.Heading', font=('Segoe UI', 10, 'bold'))
-        
+
         # Add a scrollbar to the business unit tree
         bu_vsb = ttk.Scrollbar(bu_frame, orient='vertical', command=bu_tree.yview)
         bu_tree.configure(yscrollcommand=bu_vsb.set)
         bu_tree.pack(side='left', fill='both', expand=True)
         bu_vsb.pack(side='right', fill='y')
-        
+
         # Create initial criticality chart
         self.update_criticality_chart(chart_frame, sort_var.get())
-        
+
         conn.close()
 
     def manage_departments_popup(self):
@@ -368,7 +382,7 @@ class AppTracker(tk.Tk):
             # Re-fetch departments to get ids in order
             departments_current = self.get_departments()
             to_delete = [departments_current[i][0] for i in selected_indices]
-            conn = database.sqlite3.connect(database.DB_NAME)
+            conn = database.connect_db()
             c = conn.cursor()
             for dept_id in to_delete:
                 c.execute('DELETE FROM application_business_units WHERE unit_id = ?', (dept_id,))
@@ -809,18 +823,18 @@ class AppTracker(tk.Tk):
         try:
             # Clear all current selections
             self.department_listbox.selection_clear(0, tk.END)
-            
+
             # Get the departments for this application
             app_id = int(item)
             app_departments = database.get_app_departments(app_id)
-            
+
             # Select departments in the listbox
             for i in range(self.department_listbox.size()):
                 dept_name = self.department_listbox.get(i)
                 if dept_name in app_departments:
                     self.department_listbox.selection_set(i)
-            
-            # Load other fields
+
+            # Load other fields using named access from tree values
             self.name_entry.delete(0, 'end')
             self.name_entry.insert(0, vals[0])
             self.vendor_entry.delete(0, 'end')
@@ -830,6 +844,16 @@ class AppTracker(tk.Tk):
                 entry = self.factor_entries.get(key)
                 if entry is not None:
                     entry.delete(0, 'end')
+                    # tree values are positional; prefer to fill from named DB row if available
+                    try:
+                        # attempt to fetch the application row from DB by id and use named fields
+                        app_row = database.get_application(app_id)
+                        if app_row and key.lower() in app_row.keys():
+                            entry.insert(0, app_row[key.lower()])
+                            continue
+                    except Exception:
+                        pass
+                    # fallback to treeview values
                     entry.insert(0, vals[i])
         except Exception as e:
             messagebox.showerror('Error', f'Failed to load selected row for editing: {e}')
@@ -896,42 +920,12 @@ class AppTracker(tk.Tk):
             'Security': factors['Security'], 'Monetary': factors['Monetary'], 'CustomerService': factors['CustomerService']
         }
 
-        conn = None
-        app_id = None
+        # Use database helper to create application rows and links
         try:
-            conn = database.sqlite3.connect(database.DB_NAME)
-            c = conn.cursor()
-
-            try:
-                score_result = database.score_application(ratings)
-                risk_score = score_result.total
-            except Exception:
-                risk_score = 0
-
-            # Create a separate application entry for each department
-            app_ids = []
-            for dept_id in dept_ids:
-                # Create new application entry
-                c.execute('''INSERT INTO applications (
-                    name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, risk_score, last_modified
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                    (name, vendor, factors['Score'], factors['Need'], factors['Criticality'], factors['Installed'], factors['DisasterRecovery'],
-                     factors['Safety'], factors['Security'], factors['Monetary'], factors['CustomerService'], risk_score, last_mod))
-                
-                app_id = c.lastrowid
-                app_ids.append(app_id)
-                
-                # Create business unit link for this application
-                c.execute('INSERT INTO application_business_units (app_id, unit_id) VALUES (?, ?)', 
-                         (app_id, dept_id))
-            
-            conn.commit()
+            app_ids = database.add_application(name, vendor, factors, dept_ids, notes='')
         except Exception as e:
             messagebox.showerror('Error', f'Failed to add application: {e}')
             return
-        finally:
-            if conn:
-                conn.close()
 
         if not app_ids:
             messagebox.showerror('Error', 'Failed to create application entries.')
@@ -990,31 +984,54 @@ class AppTracker(tk.Tk):
         if hasattr(self, 'search_type_var') and self.search_type_var is not None:
             search_type = self.search_type_var.get()
             
-        c.execute('''SELECT id, name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, last_modified FROM applications''')
+        c.execute('''SELECT id, name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, notes, risk_score, last_modified FROM applications''')
         rows = []
         for app_row in c.fetchall():
-            app_id = app_row[0]
+            # app_row may be sqlite3.Row (named) or tuple - calculate_business_risk handles both
+            try:
+                app_id = int(app_row['id']) if isinstance(app_row, dict) or hasattr(app_row, 'keys') else int(app_row[0])
+            except Exception:
+                app_id = int(app_row[0])
             depts = database.get_app_departments(app_id)
             dept_str = ', '.join(depts)
-            risk_score, risk_level = 0, 'Unknown'  # Initialize risk_score and risk_level
+            risk_score, risk_level = 0, 'Unknown'
             try:
                 risk_score, risk_level = database.calculate_business_risk(app_row)
             except Exception:
                 pass
-            # app_row indices: 1:name,2:vendor,3:score,4:need,5:criticality,6:installed,7:disaster_recovery,8:safety,9:security,10:monetary,11:customer_service
-            # Format last_modified as date-only (YYYY-MM-DD) for display
-            last_mod_raw = app_row[12]
+
+            # Get last_modified
+            last_mod_raw = None
+            try:
+                if hasattr(app_row, 'keys'):
+                    last_mod_raw = app_row.get('last_modified') or app_row.get('lastmodified')
+                else:
+                    # tuple-style where last_modified is at index 14
+                    last_mod_raw = app_row[14] if len(app_row) > 14 else None
+            except Exception:
+                last_mod_raw = None
             last_mod_display = ''
             if last_mod_raw:
                 try:
-                    # stored as ISO timestamp; convert to date
                     last_mod_display = datetime.fromisoformat(last_mod_raw).date().isoformat()
                 except Exception:
-                    # fallback: take date part before 'T' if present
                     last_mod_display = str(last_mod_raw).split('T')[0]
 
+            # Build display row, using named access where possible
+            name = app_row['name'] if hasattr(app_row, 'keys') and 'name' in app_row.keys() else app_row[1]
+            vendor = app_row['vendor'] if hasattr(app_row, 'keys') and 'vendor' in app_row.keys() else app_row[2]
+            score = app_row['score'] if hasattr(app_row, 'keys') and 'score' in app_row.keys() else app_row[3]
+            need = app_row['need'] if hasattr(app_row, 'keys') and 'need' in app_row.keys() else app_row[4]
+            criticality = app_row['criticality'] if hasattr(app_row, 'keys') and 'criticality' in app_row.keys() else app_row[5]
+            installed = app_row['installed'] if hasattr(app_row, 'keys') and 'installed' in app_row.keys() else app_row[6]
+            dr = app_row['disaster_recovery'] if hasattr(app_row, 'keys') and 'disaster_recovery' in app_row.keys() else app_row[7]
+            safety = app_row['safety'] if hasattr(app_row, 'keys') and 'safety' in app_row.keys() else app_row[8]
+            security = app_row['security'] if hasattr(app_row, 'keys') and 'security' in app_row.keys() else app_row[9]
+            monetary = app_row['monetary'] if hasattr(app_row, 'keys') and 'monetary' in app_row.keys() else app_row[10]
+            cust_service = app_row['customer_service'] if hasattr(app_row, 'keys') and 'customer_service' in app_row.keys() else app_row[11]
+
             row = (
-                app_row[1], app_row[2], app_row[3], app_row[4], app_row[5], app_row[6], app_row[7], app_row[8], app_row[9], app_row[10], app_row[11], dept_str, f"{risk_score} ({risk_level})", last_mod_display
+                name, vendor, score, need, criticality, installed, dr, safety, security, monetary, cust_service, dept_str, f"{risk_score} ({risk_level})", last_mod_display
             )
             
             # Apply search filtering
@@ -1340,8 +1357,10 @@ class AppTracker(tk.Tk):
                         return
                 
                 # Calculate risk score
-                result = database.score_application(ratings)
-                fields['risk_score'] = result.total  # Store as float
+                # Calculate risk score using (10 - score) * criticality
+                s = int(ratings.get('Score', 0)) if isinstance(ratings, dict) else int(ratings[0])
+                cval = int(ratings.get('Criticality', 0)) if isinstance(ratings, dict) else int(ratings[2])
+                fields['risk_score'] = (10 - s) * cval  # Store as int/float
                 
                 # Submit integration to database
                 integration_id = database.add_system_integration(self.current_parent_system_id, fields)
@@ -1530,8 +1549,14 @@ class AppTracker(tk.Tk):
                 messagebox.showinfo("Delete Integration", "Could not find the selected integration.")
                 return
                 
+            # Determine integration name for confirmation
+            try:
+                int_name = integration['name'] if hasattr(integration, 'keys') else integration[2]
+            except Exception:
+                int_name = integration[2] if len(integration) > 2 else 'Unknown'
+
             # Confirm deletion
-            if messagebox.askyesno('Confirm Delete', f'Are you sure you want to delete the integration "{integration[2]}"? This cannot be undone.'):
+            if messagebox.askyesno('Confirm Delete', f'Are you sure you want to delete the integration "{int_name}"? This cannot be undone.'):
                 # Delete the integration from the database
                 database.delete_system_integration(integration_id)
                 
@@ -1559,56 +1584,75 @@ class AppTracker(tk.Tk):
             for row in integrations:
                 if not row:
                     continue
-                    
-                # Get name and vendor (indices 2, 3 in SQL query)
-                name = str(row[1] if row[1] is not None else "")
-                vendor = str(row[2] if row[2] is not None else "")
-                
-                # Extract ratings values (indices 4-12 in SQL query)
-                ratings = []
-                for i in range(3, 12):  # score through customer_service
+
+                # Prefer named access, fallback to tuple indices
+                def _rget(r, key, idx, default=None):
                     try:
-                        if row[i] is not None:
-                            ratings.append(int(row[i]))
+                        if hasattr(r, 'keys'):
+                            val = r[key]
+                            return val if val is not None else default
+                    except Exception:
+                        pass
+                    try:
+                        return r[idx]
+                    except Exception:
+                        return default
+
+                name = str(_rget(row, 'name', 2, ''))
+                vendor = str(_rget(row, 'vendor', 3, ''))
+
+                # Extract ratings in the correct order
+                rating_keys = ['score', 'need', 'criticality', 'installed', 'disaster_recovery', 'safety', 'security', 'monetary', 'customer_service']
+                ratings = []
+                for i, rk in enumerate(rating_keys, start=4):
+                    try:
+                        val = None
+                        if hasattr(row, 'keys') and rk in row.keys():
+                            val = row[rk]
                         else:
-                            ratings.append(0)
-                    except (ValueError, TypeError):
+                            val = row[i]
+                        ratings.append(int(val) if val is not None else 0)
+                    except Exception:
                         ratings.append(0)
-                
-                # Handle risk score (index 13)
+
+                # Format risk_text
                 risk_text = "N/A"
+                risk_score = 0.0
                 try:
-                    if row[13] is not None:
-                        risk_val = float(row[13])
-                        risk_text = f"{risk_val:.1f} ({database.dr_priority_band(risk_val)})"
-                except (ValueError, TypeError, IndexError):
-                    pass
-                
-                # Handle last modified (index 14)
-                last_mod = "N/A"
-                try:
-                    if row[14]:
-                        last_mod = datetime.fromisoformat(str(row[14])).strftime('%Y-%m-%d %H:%M')
-                except (ValueError, TypeError, IndexError):
-                    if row[14]:
-                        last_mod = str(row[14])
-                
-                # Construct the values tuple for the tree
-                values = [name, vendor] + ratings + [risk_text, last_mod]
-                
-                # Get the risk score and determine color
-                risk_score = 0
-                try:
-                    if row[13] is not None:  # risk_score is at index 13
-                        risk_score = float(row[13])
-                except (ValueError, TypeError, IndexError):
+                    if hasattr(row, 'keys') and 'risk_score' in row.keys():
+                        if row['risk_score'] is not None:
+                            risk_score = float(row['risk_score'])
+                            risk_text = f"{risk_score:.1f} ({database.dr_priority_band(risk_score)})"
+                    else:
+                        if row[14] is not None:
+                            risk_score = float(row[14])
+                            risk_text = f"{risk_score:.1f} ({database.dr_priority_band(risk_score)})"
+                except Exception:
                     pass
 
-                # Get color based on risk score
+                # Format last_modified
+                last_mod = ""
+                lm = None
+                try:
+                    if hasattr(row, 'keys') and 'last_modified' in row.keys():
+                        lm = row['last_modified']
+                    else:
+                        lm = row[15] if len(row) > 15 else None
+                    if lm:
+                        last_mod = datetime.fromisoformat(str(lm)).strftime('%Y-%m-%d %H:%M')
+                except Exception:
+                    try:
+                        if lm:
+                            last_mod = str(lm)
+                    except Exception:
+                        last_mod = ''
+
+                # Build values in exact column order expected by the integrations_tree
+                values = [name, vendor] + ratings + [risk_text, last_mod]
+
                 color = get_risk_color(risk_score)
-                
-                # Insert into tree with the integration ID as the iid and apply color tag
-                self.integrations_tree.insert('', 'end', iid=str(row[0]), values=values, tags=(color,))
+
+                self.integrations_tree.insert('', 'end', iid=str(_rget(row, 'id', 0)), values=values, tags=(color,))
                 
             # Configure the color tags for the tree
             self.integrations_tree.tag_configure('red', background='#ffcccc')
@@ -1635,7 +1679,11 @@ class AppTracker(tk.Tk):
                 
             # Create a dialog for editing the integration
             dialog = tk.Toplevel(self)
-            dialog.title(f'Edit Integration: {integration[2]}')
+            try:
+                int_title = integration['name'] if hasattr(integration, 'keys') else integration[2]
+            except Exception:
+                int_title = integration[2] if len(integration) > 2 else 'Edit Integration'
+            dialog.title(f'Edit Integration: {int_title}')
             dialog.geometry('500x650')
             dialog.minsize(500, 650)
             dialog.resizable(False, False)
@@ -1650,13 +1698,19 @@ class AppTracker(tk.Tk):
             ttk.Label(form_frame, text='Integration Name:', anchor='e').grid(row=0, column=0, sticky='e', pady=5, padx=5)
             name_entry = ttk.Entry(form_frame, width=40)
             name_entry.grid(row=0, column=1, sticky='w', pady=5, padx=5)
-            name_entry.insert(0, integration[2] or "")
+            try:
+                name_entry.insert(0, integration['name'] or "")
+            except Exception:
+                name_entry.insert(0, integration[2] or "")
             name_entry.focus_set()
             
             ttk.Label(form_frame, text='Vendor:', anchor='e').grid(row=1, column=0, sticky='e', pady=5, padx=5)
             vendor_entry = ttk.Entry(form_frame, width=40)
             vendor_entry.grid(row=1, column=1, sticky='w', pady=5, padx=5)
-            vendor_entry.insert(0, integration[3] or "")
+            try:
+                vendor_entry.insert(0, integration['vendor'] or "")
+            except Exception:
+                vendor_entry.insert(0, integration[3] or "")
             
             # Factor entry fields
             factor_entries = {}
@@ -1676,9 +1730,18 @@ class AppTracker(tk.Tk):
                 entry = ttk.Entry(form_frame, width=5)
                 entry.grid(row=idx, column=1, sticky='w', pady=5, padx=5)
                 
-                # Pre-populate with existing values
-                if integration[factor_indices[key]] is not None:
-                    entry.insert(0, str(integration[factor_indices[key]]))
+                # Pre-populate with existing values using named access when possible
+                try:
+                    if hasattr(integration, 'keys') and key.lower() in integration.keys() and integration[key.lower()] is not None:
+                        entry.insert(0, str(integration[key.lower()]))
+                    elif integration[factor_indices[key]] is not None:
+                        entry.insert(0, str(integration[factor_indices[key]]))
+                except Exception:
+                    try:
+                        if integration[factor_indices[key]] is not None:
+                            entry.insert(0, str(integration[factor_indices[key]]))
+                    except Exception:
+                        pass
                     
                 factor_entries[key] = entry
             
@@ -1735,8 +1798,10 @@ class AppTracker(tk.Tk):
                             return
                     
                     # Calculate risk score
-                    result = database.score_application(ratings)
-                    fields['risk_score'] = result.total  # Store as float
+                        # Calculate risk score using (10 - score) * criticality
+                        s = int(ratings.get('Score', 0)) if isinstance(ratings, dict) else int(ratings[0])
+                        cval = int(ratings.get('Criticality', 0)) if isinstance(ratings, dict) else int(ratings[2])
+                        fields['risk_score'] = (10 - s) * cval  # Store as int/float
                     
                     # Update integration in database
                     success = database.update_system_integration(integration_id, fields)
