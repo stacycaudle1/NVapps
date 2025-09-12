@@ -89,7 +89,8 @@ class AppTracker(tk.Tk):
         # Reduce rowheight to make rows closer together
         style.configure('Treeview', rowheight=22, font=tree_font, background='white', fieldbackground='white')
         # Tighten heading padding so columns sit closer together
-        style.configure('Treeview.Heading', font=heading_font, background=HEADER_BG, foreground=HEADER_FG, relief='flat', borderwidth=0, padding=(4,2))
+        # Slightly more horizontal padding so heading text doesn't crowd the borders
+        style.configure('Treeview.Heading', font=heading_font, background=HEADER_BG, foreground=HEADER_FG, relief='flat', borderwidth=0, padding=(8,4))
         # Ensure mapping works across themes
         try:
             style.map('Treeview.Heading', background=[('active', HEADER_BG), ('!disabled', HEADER_BG)], foreground=[('active', HEADER_FG), ('!disabled', HEADER_FG)])
@@ -501,7 +502,7 @@ class AppTracker(tk.Tk):
         self.category_style = {'font': ('Segoe UI', 11, 'bold'), 'fg': '#333333', 'bg': WIN_BG, 'pady': 5}
 
         # --- Business Units section (moved above Rating Factors) ---
-        bu_header = tk.Label(form_frame, text="Select Business Units (Select all that apply)", **self.category_style)
+        bu_header = tk.Label(form_frame, text="Select Business Unit:", **self.category_style)
         bu_header.grid(row=0, column=0, columnspan=2, sticky='nw', padx=padx, pady=(0, 2))
 
         ttk.Separator(form_frame, orient='horizontal').grid(row=1, column=0, columnspan=2, sticky='ew', pady=(8, 8))
@@ -681,14 +682,22 @@ class AppTracker(tk.Tk):
             columns=('Business Unit', 'Division', 'Last Modified'),
             show='headings'
         )
-        # apply sensible widths for the reduced set (Business Unit first)
+        # tuned widths and anchors to align like the provided screenshot
         cols = list(self.tree['columns'])
-        base_widths = {'Business Unit': 260, 'Division': 300, 'Last Modified': 140}
+        base_widths = {'Business Unit': 420, 'Division': 300, 'Last Modified': 140}
         for col in cols:
             w = base_widths.get(col, 120)
-            anchor = 'w' if col in ('Division', 'Business Unit') else 'center'
+            if col == 'Business Unit':
+                anchor = 'w'
+            elif col == 'Division':
+                anchor = 'w'
+            elif col == 'Last Modified':
+                anchor = 'w'
+            else:
+                anchor = 'e'
             heading_text = col
-            self.tree.heading(col, text=heading_text, command=lambda c=col: self.sort_table(c, False))
+            # Ensure heading text aligns with data cells
+            self.tree.heading(col, text=heading_text, anchor='w', command=lambda c=col: self.sort_table(c, False))
             # Disable stretch to keep columns at the specified widths and closer together
             self.tree.column(col, width=w, anchor=anchor, stretch=False, minwidth=60)
 
@@ -698,6 +707,8 @@ class AppTracker(tk.Tk):
         self.tree.grid(row=1, column=0, sticky='nsew')
         vsb.grid(row=1, column=1, sticky='ns')
         table_frame.rowconfigure(1, weight=1)
+        # reserve a grid row for the details area so it aligns with the table columns
+        table_frame.rowconfigure(2, weight=0)
         table_frame.columnconfigure(0, weight=1)
         
         # Sub-systems/Integrations table area (bottom half)
@@ -746,7 +757,8 @@ class AppTracker(tk.Tk):
             anchor = 'w' if col in ('Name', 'Vendor') else 'center'
             # Use consistent column names
             heading_text = 'Cust Service' if col == 'CustomerService' else col
-            self.integrations_tree.heading(col, text=heading_text, 
+            # Align integration headings with left-anchored values where applicable
+            self.integrations_tree.heading(col, text=heading_text, anchor='w',
                                         command=lambda c=col: self.sort_integration_table(c, False))
             self.integrations_tree.column(col, width=w, anchor=anchor, stretch=True, minwidth=w)
         
@@ -761,19 +773,22 @@ class AppTracker(tk.Tk):
         # Make both tables the same height
         tables_container.update_idletasks()
         
-        # Details area below the tables: read-only Text widget showing selected row details
-        details_frame = ttk.Frame(right_frame)
-        details_frame.pack(fill='x', expand=False, pady=(10, 0))
-        
-        details_text = tk.Text(details_frame, wrap='word', height=6, width=80)
+        # Details area below the tables: place inside table_frame so left/right edges align
+        details_frame = ttk.Frame(table_frame)
+        # Span both columns (tree + its vertical scrollbar) so left/right align exactly
+        details_frame.grid(row=2, column=0, columnspan=2, sticky='ew', pady=(6, 0))
+        details_frame.columnconfigure(0, weight=1)
+
+        # Remove fixed width so the Text widget expands to container width
+        details_text = tk.Text(details_frame, wrap='word', height=6)
         details_vsb = ttk.Scrollbar(details_frame, orient='vertical', command=details_text.yview)
         details_text.configure(yscrollcommand=details_vsb.set, state='disabled')
-        details_text.pack(side='left', fill='both', expand=True)
-        details_vsb.pack(side='right', fill='y')
-        
+        # Use grid to ensure exact alignment with table_frame columns
+        details_text.grid(row=0, column=0, sticky='ew')
+        details_vsb.grid(row=0, column=1, sticky='ns')
         # expose as attribute so handlers can update it
         self.details_text = details_text
-        
+
         # Store the current parent system ID for integration operations
         self.current_parent_system_id = None
 
