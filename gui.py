@@ -262,7 +262,71 @@ class AppTracker(tk.Tk):
         # Close the figure to free memory
         plt.close(fig)
     
+    def debug_show_table_data(self):
+        """Debug helper to check data in tables"""
+        conn = database.connect_db()
+        conn.row_factory = database.sqlite3.Row
+        c = conn.cursor()
+        
+        # Check system_integrations
+        print("\nChecking system_integrations table:")
+        c.execute("SELECT COUNT(*) as count FROM system_integrations")
+        count = c.fetchone()['count']
+        print(f"Total integrations: {count}")
+        if count > 0:
+            c.execute("SELECT * FROM system_integrations LIMIT 3")
+            print("Sample rows:")
+            for row in c.fetchall():
+                print(dict(row))
+        
+        # Check applications
+        print("\nChecking applications table:")
+        c.execute("SELECT COUNT(*) as count FROM applications")
+        count = c.fetchone()['count']
+        print(f"Total applications: {count}")
+        if count > 0:
+            c.execute("SELECT * FROM applications LIMIT 3")
+            print("Sample rows:")
+            for row in c.fetchall():
+                print(dict(row))
+        
+        # Check business_units
+        print("\nChecking business_units table:")
+        c.execute("SELECT COUNT(*) as count FROM business_units")
+        count = c.fetchone()['count']
+        print(f"Total business units: {count}")
+        if count > 0:
+            c.execute("SELECT * FROM business_units LIMIT 3")
+            print("Sample rows:")
+            for row in c.fetchall():
+                print(dict(row))
+        
+        # Check relationships
+        print("\nChecking relationships:")
+        c.execute("""
+            SELECT 
+                i.id as integration_id,
+                i.name as integration_name,
+                a.id as app_id,
+                a.name as app_name,
+                bu.id as bu_id,
+                bu.name as bu_name
+            FROM system_integrations i
+            LEFT JOIN applications a ON i.parent_app_id = a.id
+            LEFT JOIN application_business_units abu ON a.id = abu.app_id
+            LEFT JOIN business_units bu ON abu.unit_id = bu.id
+            LIMIT 5
+        """)
+        print("Sample joined rows:")
+        for row in c.fetchall():
+            print(dict(row))
+        
+        conn.close()
+
     def show_report(self):
+        # Debug: check table data first
+        self.debug_show_table_data()
+        
         report_win = tk.Toplevel(self)
         report_win.title('System Reports')
         report_win.configure(bg=WIN_BG)
@@ -271,6 +335,135 @@ class AppTracker(tk.Tk):
         # Create a notebook for different report tabs
         notebook = ttk.Notebook(report_win)
         notebook.pack(fill='both', expand=True, padx=10, pady=10)
+        
+        # Risk Range Integrations Tab
+        risk_frame = ttk.Frame(notebook)
+        notebook.add(risk_frame, text='Risk Range Report')
+        
+        # Add header
+        risk_header = tk.Frame(risk_frame, bg=WIN_BG)
+        risk_header.pack(fill='x', pady=(10, 15))
+        risk_label = tk.Label(risk_header, text='Integrations by Risk Range', 
+                          font=('Segoe UI', 14, 'bold'), fg=ACCENT, bg=WIN_BG)
+        risk_label.pack(side='left', padx=15)
+        
+        # Controls frame for risk range selection
+        controls_frame = ttk.Frame(risk_frame)
+        controls_frame.pack(fill='x', padx=15, pady=5)
+        
+        # Risk range selector
+        ttk.Label(controls_frame, text="Risk Range:").pack(side='left', padx=5)
+        risk_var = tk.StringVar(value="All")
+        risk_options = ttk.Combobox(controls_frame, textvariable=risk_var, 
+                                   values=["All", "Low (1-49)", "Med (50-69)", "High (70+)"],
+                                   width=15, state='readonly')
+        risk_options.pack(side='left', padx=5)
+        
+        # Create the risk-filtered table
+        columns = ('Business Unit', 'Division', 'Integration Name', 'Vendor', 
+                  'Score', 'Criticality', 'Risk', 'Notes')
+        risk_tree = ttk.Treeview(risk_frame, columns=columns, show='headings')
+        
+        # Configure columns with appropriate widths and anchors
+        widths = {
+            'Business Unit': 200, 'Division': 180, 'Integration Name': 200,
+            'Vendor': 150, 'Score': 80, 'Criticality': 80, 'Risk': 80, 'Notes': 200
+        }
+        for col in columns:
+            risk_tree.heading(col, text=col, anchor='w',
+                            command=lambda c=col: self.report_sort_table(risk_tree, c, False))
+            w = widths.get(col, 100)
+            # Use left alignment for text columns, center for numeric
+            anchor = 'w' if col in ('Business Unit', 'Division', 'Integration Name', 'Vendor', 'Notes') else 'center'
+            risk_tree.column(col, width=w, anchor=anchor, stretch=True if col == 'Notes' else False)
+        
+        # Create a container for the table and scrollbars
+        table_container = ttk.Frame(risk_frame)
+        table_container.pack(fill='both', expand=True, padx=15, pady=5)
+        
+        # Add scrollbars
+        vsb = ttk.Scrollbar(table_container, orient='vertical', command=risk_tree.yview)
+        hsb = ttk.Scrollbar(table_container, orient='horizontal', command=risk_tree.xview)
+        risk_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        
+        # Pack layout for table and scrollbars
+        risk_tree.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+        hsb.pack(side='bottom', fill='x')
+        
+        def update_risk_table(*args):
+            risk_tree.delete(*risk_tree.get_children())
+            
+            conn = database.connect_db()
+            conn.row_factory = database.sqlite3.Row
+            c = conn.cursor()
+            
+            # Build the risk range condition based on integration risk scores
+            risk_selection = risk_var.get()
+            if risk_selection == "Low (1-49)":
+                risk_condition = "AND i.risk_score < 50"
+            elif risk_selection == "Med (50-69)":
+                risk_condition = "AND i.risk_score >= 50 AND i.risk_score < 70"
+            elif risk_selection == "High (70+)":
+                risk_condition = "AND i.risk_score >= 70"
+            else:
+                risk_condition = ""
+            print(f"Selected risk range: {risk_selection}, condition: {risk_condition}")
+            
+            # Debug: print the query being executed
+            query = f'''
+                SELECT DISTINCT
+                    bu.name as business_unit,
+                    a.name as division,
+                    i.name as integration_name,
+                    i.vendor,
+                    i.score,
+                    i.criticality,
+                    i.risk_score as risk,
+                    i.notes
+                FROM system_integrations i
+                JOIN applications a ON i.parent_app_id = a.id
+                JOIN application_business_units abu ON a.id = abu.app_id
+                JOIN business_units bu ON abu.unit_id = bu.id
+                WHERE 1=1 {risk_condition}
+                ORDER BY bu.name, a.name, i.name
+            '''
+            print(f"Executing query: {query}")
+            try:
+                c.execute(query)
+                results = c.fetchall()
+                print(f"Found {len(results)} rows")
+            except Exception as e:
+                print(f"Query error: {str(e)}")
+                messagebox.showerror("Error", f"Failed to fetch data: {str(e)}")
+                return
+            
+            for row in c.fetchall():
+                values = (
+                    row['business_unit'],
+                    row['division'],
+                    row['integration_name'],
+                    row['vendor'],
+                    row['score'],
+                    row['criticality'],
+                    f"{float(row['risk']):.1f}" if row['risk'] is not None else "0.0",
+                    row['notes'] or ""
+                )
+                tag = get_risk_color(row['risk'])
+                risk_tree.insert('', 'end', values=values, tags=(tag,))
+            
+            conn.close()
+            
+            # Configure row colors based on risk
+            risk_tree.tag_configure('red', background='#ffcccc')
+            risk_tree.tag_configure('yellow', background='#fff2cc')
+            risk_tree.tag_configure('green', background='#ccffcc')
+        
+        # Bind the update function to combobox selection
+        risk_var.trace('w', update_risk_table)
+        
+        # Initial population of the risk table
+        update_risk_table()
         
         # Business Unit Risk Tab
         bu_frame = ttk.Frame(notebook)
