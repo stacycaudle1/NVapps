@@ -18,16 +18,21 @@ def get_risk_color(score):
     Low: 1-49 -> green, Med: 50-69 -> yellow, High: 70-100 -> red
     """
     try:
+        # Treat None or empty as no color
+        if score is None:
+            return None
         s = float(score)
     except Exception:
-        return 'green'
+        return None
 
     if s >= 70:
         return 'red'
     if s >= 50:
         return 'yellow'
-    # treat 0 and negatives as Low/green
-    return 'green'
+    if s >= 1:
+        return 'green'
+    # zero or negative => no color
+    return None
 
 class AppTracker(tk.Tk):
     def __init__(self):
@@ -437,8 +442,8 @@ class AppTracker(tk.Tk):
                 print(f"Query error: {str(e)}")
                 messagebox.showerror("Error", f"Failed to fetch data: {str(e)}")
                 return
-            
-            for row in c.fetchall():
+
+            for row in results:
                 values = (
                     row['business_unit'],
                     row['division'],
@@ -450,7 +455,11 @@ class AppTracker(tk.Tk):
                     row['notes'] or ""
                 )
                 tag = get_risk_color(row['risk'])
-                risk_tree.insert('', 'end', values=values, tags=(tag,))
+                # Only pass tag if it's not None
+                if tag:
+                    risk_tree.insert('', 'end', values=values, tags=(tag,))
+                else:
+                    risk_tree.insert('', 'end', values=values)
             
             conn.close()
             
@@ -516,33 +525,39 @@ class AppTracker(tk.Tk):
         # Populate business unit data
         conn = database.connect_db()
         c = conn.cursor()
-        # Aggregate by business unit using the correct business_units relationship
-        c.execute('''SELECT bu.name, COUNT(abu.app_id), AVG(a.risk_score)
-                     FROM business_units bu
-                     LEFT JOIN application_business_units abu ON bu.id = abu.unit_id
-                     LEFT JOIN applications a ON abu.app_id = a.id
-                     GROUP BY bu.id''')
-        for bu_name, count, avg_risk in c.fetchall():
-            if avg_risk is None:
+        # Aggregate by business unit using average integration risk (system_integrations.risk_score)
+        c.execute('''SELECT bu.name, COUNT(DISTINCT abu.app_id) as app_count, AVG(i.risk_score) as avg_integration_risk
+                 FROM business_units bu
+                 LEFT JOIN application_business_units abu ON bu.id = abu.unit_id
+                 LEFT JOIN applications a ON abu.app_id = a.id
+                 LEFT JOIN system_integrations i ON a.id = i.parent_app_id
+                 GROUP BY bu.id''')
+        results = c.fetchall()
+        for bu_name, count, avg_risk in results:
+            if avg_risk is None or avg_risk < 1:
                 status = 'No Data'
-                color = 'white'
+                bu_tree.insert('', 'end', values=(bu_name, count, '0', status))
             else:
                 try:
                     avg = float(avg_risk)
                 except Exception:
                     avg = 0.0
-                # Map into Low/Med/High using new bands
-                if avg >= 70:
+                tag = get_risk_color(avg)
+                if tag == 'red':
                     status = 'High'
-                    color = '#ffcccc'
-                elif avg >= 50:
+                elif tag == 'yellow':
                     status = 'Med'
-                    color = '#fff2cc'
                 else:
                     status = 'Low'
-                    color = '#ccffcc'
-            bu_tree.insert('', 'end', values=(bu_name, count, f'{avg_risk:.1f}' if avg_risk else '0', status), tags=(status,))
-            bu_tree.tag_configure(status, background=color)
+                if tag:
+                    bu_tree.insert('', 'end', values=(bu_name, count, f'{avg:.1f}', status), tags=(tag,))
+                else:
+                    bu_tree.insert('', 'end', values=(bu_name, count, f'{avg:.1f}', status))
+
+        # Configure row colors based on risk (do this once, outside the loop)
+        bu_tree.tag_configure('red', background='#ffcccc')
+        bu_tree.tag_configure('yellow', background='#fff2cc')
+        bu_tree.tag_configure('green', background='#ccffcc')
 
         # Add styling to the report tree
         tree_style = ttk.Style()
@@ -877,9 +892,21 @@ class AppTracker(tk.Tk):
         table_frame = ttk.Frame(tables_container)
         table_frame.pack(fill='both', expand=True, side='top')
         
-        # Main systems table title
-        systems_title = ttk.Label(table_frame, text="Business Unit / Division", font=('Segoe UI', 11, 'bold'))
+        # Header row for main table: title on left, color legend on right
+        header_frame = ttk.Frame(table_frame)
+        header_frame.grid(row=0, column=0, columnspan=2, sticky='ew')
+        header_frame.columnconfigure(0, weight=1)
+        systems_title = ttk.Label(header_frame, text="Business Unit / Division", font=('Segoe UI', 11, 'bold'))
         systems_title.grid(row=0, column=0, sticky='w', padx=5, pady=(0, 5))
+        # Add a small legend explaining color bands
+        legend_frame = ttk.Frame(header_frame)
+        legend_frame.grid(row=0, column=1, sticky='e', padx=5, pady=(0, 5))
+        def _legend_chip(parent, text, bg):
+            lbl = tk.Label(parent, text=text, bg=bg, fg='black', padx=6, pady=2)
+            lbl.pack(side='left', padx=3)
+        _legend_chip(legend_frame, 'High (≥70)', '#ffcccc')
+        _legend_chip(legend_frame, 'Med (50–69)', '#fff2cc')
+        _legend_chip(legend_frame, 'Low (1–49)', '#ccffcc')
         
         # Reduce visible columns to only what's required by the user: Business Unit, Division, Last Modified
         self.tree = ttk.Treeview(
@@ -993,6 +1020,14 @@ class AppTracker(tk.Tk):
         details_vsb.grid(row=0, column=1, sticky='ns')
         # expose as attribute so handlers can update it
         self.details_text = details_text
+        # Configure text tags to highlight risk value
+        try:
+            self.details_text.tag_configure('risk_red', foreground='#b00020', font=('Segoe UI', 10, 'bold'))
+            self.details_text.tag_configure('risk_yellow', foreground='#8a6d3b', font=('Segoe UI', 10, 'bold'))
+            self.details_text.tag_configure('risk_green', foreground='#2e7d32', font=('Segoe UI', 10, 'bold'))
+            self.details_text.tag_configure('risk_na', foreground='#6c757d', font=('Segoe UI', 10, 'italic'))
+        except Exception:
+            pass
 
         # Store the current parent system ID for integration operations
         self.current_parent_system_id = None
@@ -1034,30 +1069,6 @@ class AppTracker(tk.Tk):
                 self.name_entry.insert(0, app_row['name'] if hasattr(app_row, 'keys') and 'name' in app_row.keys() else app_row[1])
             except Exception:
                 pass
-            # try:
-            #     self.vendor_entry.delete(0, 'end')
-            #     self.vendor_entry.insert(0, app_row['vendor'] if hasattr(app_row, 'keys') and 'vendor' in app_row.keys() else app_row[2])
-            # except Exception:
-                pass
-
-        #     keys = ['Score', 'Need', 'Criticality', 'Installed', 'DisasterRecovery', 'Safety', 'Security', 'Monetary', 'CustomerService']
-        #     for key in keys:
-        #         entry = self.factor_entries.get(key)
-        #         if entry is not None:
-        #             entry.delete(0, 'end')
-        #             try:
-        #                 if app_row and hasattr(app_row, 'keys') and key.lower() in app_row.keys():
-        #                     entry.insert(0, app_row[key.lower()] or 0)
-        #                 else:
-        #                     # tuple fallback using known indices from applications query
-        #                     idx_map = {
-        #                         'Score': 3, 'Need': 4, 'Criticality': 5, 'Installed': 6, 'DisasterRecovery': 7,
-        #                         'Safety': 8, 'Security': 9, 'Monetary': 10, 'CustomerService': 11
-        #                     }
-        #                     val = app_row[idx_map[key]] if app_row and len(app_row) > idx_map[key] else 0
-        #                     entry.insert(0, val)
-        #             except Exception:
-        #                 entry.insert(0, 0)
         except Exception as e:
             messagebox.showerror('Error', f'Failed to load selected row for editing: {e}')
 
@@ -1193,6 +1204,18 @@ class AppTracker(tk.Tk):
         if hasattr(self, 'search_type_var') and self.search_type_var is not None:
             search_type = self.search_type_var.get()
             
+        # Pre-compute average integration risk per application
+        avg_map = {}
+        try:
+            c.execute('SELECT parent_app_id, AVG(risk_score) FROM system_integrations GROUP BY parent_app_id')
+            for app_id_val, avg_val in c.fetchall():
+                try:
+                    avg_map[int(app_id_val)] = float(avg_val) if avg_val is not None else None
+                except Exception:
+                    avg_map[int(app_id_val)] = None
+        except Exception:
+            avg_map = {}
+
         c.execute('''SELECT id, name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, notes, risk_score, last_modified FROM applications''')
         rows = []
         for app_row in c.fetchall():
@@ -1207,12 +1230,9 @@ class AppTracker(tk.Tk):
             # We'll display the first Business Unit (or comma-join if multiple)
             dept_str = ', '.join(depts)
 
-            # Compute risk_score for color/banding
-            risk_score, risk_level = 0, 'Unknown'
-            try:
-                risk_score, risk_level = database.calculate_business_risk(app_row)
-            except Exception:
-                pass
+            # Compute color based on average integration risk for this app
+            avg_integration_risk = avg_map.get(app_id)
+            risk_score = avg_integration_risk if avg_integration_risk is not None else 0
 
             # Get last_modified as date string
             last_mod_raw = None
@@ -1252,7 +1272,10 @@ class AppTracker(tk.Tk):
         for row, app_id, risk_score in rows:
             color = get_risk_color(risk_score)
             # store the app id as the item iid so we can identify it later
-            self.tree.insert('', 'end', iid=str(app_id), values=row, tags=(color,))
+            if color:
+                self.tree.insert('', 'end', iid=str(app_id), values=row, tags=(color,))
+            else:
+                self.tree.insert('', 'end', iid=str(app_id), values=row)
         self.tree.tag_configure('red', background='#ffcccc')
         self.tree.tag_configure('yellow', background='#fff2cc')
         self.tree.tag_configure('green', background='#ccffcc')
@@ -1299,20 +1322,48 @@ class AppTracker(tk.Tk):
                 self.current_parent_system_id = None
                 self.integrations_title.configure(text="System Sub/Integrations")
             
+            # Compute exact average integration risk for the selected system
+            avg_val = None
+            try:
+                conn = database.connect_db()
+                cur = conn.cursor()
+                cur.execute('SELECT AVG(risk_score) FROM system_integrations WHERE parent_app_id = ?', (self.selected_app_id,))
+                row = cur.fetchone()
+                if row is not None:
+                    try:
+                        avg_val = float(row[0]) if row[0] is not None else None
+                    except Exception:
+                        avg_val = None
+                conn.close()
+            except Exception:
+                avg_val = None
+
+            # Determine band and tag for highlighting
+            band = database.dr_priority_band(avg_val if avg_val is not None else 0)
+            tag = None
+            if avg_val is None or avg_val <= 0:
+                tag = 'risk_na'
+            else:
+                tag_name = get_risk_color(avg_val)
+                tag = f"risk_{tag_name}" if tag_name else 'risk_na'
+
             # fetch notes from DB if possible
             notes = None
             if self.selected_app_id is not None:
                 app_row = database.get_application(self.selected_app_id)
                 if app_row is not None and len(app_row) > 12:
                     notes = app_row[12]
-            
-            # display notes or default text
+
+            # display average risk line followed by notes/default text
             self.details_text.configure(state='normal')
             self.details_text.delete('1.0', 'end')
-            if notes:
-                self.details_text.insert('end', notes)
+            self.details_text.insert('end', 'Avg Integration Risk: ')
+            if avg_val is None or avg_val <= 0:
+                self.details_text.insert('end', 'N/A', tag)
             else:
-                self.details_text.insert('end', 'No notes')
+                self.details_text.insert('end', f"{avg_val:.1f}", tag)
+            self.details_text.insert('end', f" ({band})\n\n")
+            self.details_text.insert('end', notes if notes else 'No notes')
             self.details_text.configure(state='disabled')
             
             # refresh integrations table
@@ -1863,8 +1914,10 @@ class AppTracker(tk.Tk):
                 values = [name, vendor] + ratings + [risk_text, last_mod]
 
                 color = get_risk_color(risk_score)
-
-                self.integrations_tree.insert('', 'end', iid=str(_rget(row, 'id', 0)), values=values, tags=(color,))
+                if color:
+                    self.integrations_tree.insert('', 'end', iid=str(_rget(row, 'id', 0)), values=values, tags=(color,))
+                else:
+                    self.integrations_tree.insert('', 'end', iid=str(_rget(row, 'id', 0)), values=values)
                 
             # Configure the color tags for the tree
             self.integrations_tree.tag_configure('red', background='#ffcccc')
