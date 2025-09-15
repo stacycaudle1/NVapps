@@ -53,7 +53,7 @@ class AppTracker(tk.Tk):
         self.search_entry = None
         self.search_type_var = None
         self.search_after_id = None  # For delayed search
-        database.init_db()  # Ensure DB schema is correct before anything else
+        database.initialize_database()  # Ensure DB schema is correct before anything else
         self.create_widgets()
         # Populate the department listbox after creating widgets
         print("DEBUG: Initializing departments")  # Debug log
@@ -118,12 +118,13 @@ class AppTracker(tk.Tk):
         style.map('Success.TButton', background=[('active', '!disabled', '#7CCD7C')], foreground=[('disabled', '#a0a0a0')])
 
     def get_departments(self):
+        """Get all business units (departments) from the database"""
         conn = database.connect_db()
         c = conn.cursor()
         c.execute('SELECT id, name FROM business_units ORDER BY name ASC')
         departments = c.fetchall()
         conn.close()
-        print(f"DEBUG: Retrieved departments: {departments}")  # Debugging log
+        print(f"DEBUG: Retrieved business units: {departments}")  # Debugging log
         return departments
 
     def add_department_popup(self):
@@ -139,7 +140,7 @@ class AppTracker(tk.Tk):
                 return
             conn = database.connect_db()
             c = conn.cursor()
-            c.execute('INSERT OR IGNORE INTO business_units (name) VALUES (?)', (dept_name,))
+            c.execute('INSERT OR IGNORE INTO business_units (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)', (dept_name,))
             conn.commit()
             conn.close()
             # Update department_listbox with new departments
@@ -873,18 +874,22 @@ class AppTracker(tk.Tk):
             conn = database.connect_db()
             c = conn.cursor()
             # Aggregate by business unit using average integration risk (system_integrations.risk_score)
-            c.execute('''SELECT bu.name, COUNT(DISTINCT abu.app_id) as app_count, AVG(i.risk_score) as avg_integration_risk
+            c.execute('''SELECT bu.name, 
+                               a.name as division,
+                               bu.last_modified,
+                               COUNT(DISTINCT abu.app_id) as app_count,
+                               AVG(i.risk_score) as avg_integration_risk
                      FROM business_units bu
                      LEFT JOIN application_business_units abu ON bu.id = abu.unit_id
                      LEFT JOIN applications a ON abu.app_id = a.id
                      LEFT JOIN system_integrations i ON a.id = i.parent_app_id
                      GROUP BY bu.id''')
             results = c.fetchall()
-            for bu_name, count, avg_risk in results:
+            for bu_name, division, last_modified, count, avg_risk in results:
                 if avg_risk is None or avg_risk < 1:
                     status = 'No Data'
-                    raw_values = (bu_name, count, 0.0, status)
-                    bu_tree.insert('', 'end', values=bu_api['format'](raw_values))
+                    raw_values = (bu_name, division, last_modified)
+                    bu_tree.insert('', 'end', values=raw_values)
                 else:
                     try:
                         avg = float(avg_risk)
@@ -897,12 +902,11 @@ class AppTracker(tk.Tk):
                         status = 'Med'
                     else:
                         status = 'Low'
-                    raw_values = (bu_name, count, avg, status)
-                    formatted = bu_api['format'](raw_values)
+                    raw_values = (bu_name, division, last_modified)
                     if tag:
-                        bu_tree.insert('', 'end', values=formatted, tags=(tag,))
+                        bu_tree.insert('', 'end', values=raw_values, tags=(tag,))
                     else:
-                        bu_tree.insert('', 'end', values=formatted)
+                        bu_tree.insert('', 'end', values=raw_values)
             # Configure row colors based on risk (do this once per refresh)
             bu_tree.tag_configure('red', background='#ffcccc')
             bu_tree.tag_configure('yellow', background='#fff2cc')
@@ -1191,6 +1195,12 @@ class AppTracker(tk.Tk):
             gen_smoke_btn.pack(side='right', padx=6)
         except Exception:
             # If the handler isn't available for some reason, skip silently
+            pass
+        # Import CSV button (single-file import matching smoke-test format)
+        try:
+            import_btn = ttk.Button(top_buttons_frame, text='Import CSV', command=self.import_csv_dialog, style='Secondary.TButton')
+            import_btn.pack(side='right', padx=6)
+        except Exception:
             pass
         
         # Create Note and Save Note buttons in a separate frame below
@@ -2072,6 +2082,562 @@ class AppTracker(tk.Tk):
             width=15  # Make button wider
         )
         cancel_btn.pack(side='right', padx=10)
+    
+    def import_csv_dialog(self):
+        """
+        Open file dialog to select a single CSV file and import it.
+        Expects the CSV to match the smoke-test single-file format (applications + integrations rows).
+        """
+        try:
+            from tkinter import filedialog
+            path = filedialog.askopenfilename(title='Select CSV file to import', filetypes=[('CSV files', '*.csv'), ('All files', '*.*')])
+            if not path:
+                return
+            # Run import in background to avoid blocking the Tk mainloop
+            import threading
+            t = threading.Thread(target=lambda: self.import_csv_worker(path), daemon=True)
+            t.start()
+        except Exception as e:
+            messagebox.showerror('Import Error', f'Failed to open CSV file: {e}')
+
+    # Minimal progress window used during long-running imports
+    class ProgressWindow(tk.Toplevel):
+        def __init__(self, parent, title='Progress', message='Working...'):
+            super().__init__(parent)
+            self.title(title)
+            self.transient(parent)
+            self.grab_set()
+            self.resizable(False, False)
+            self.protocol('WM_DELETE_WINDOW', lambda: None)
+            
+            # Create main frame with padding
+            self.frame = ttk.Frame(self, padding=10)
+            self.frame.pack(fill='both', expand=True)
+            
+            # Message label above progress bar
+            self.label = ttk.Label(self.frame, text=message)
+            self.label.pack(fill='x', expand=True, pady=(0, 5))
+            
+            # Progress bar
+            self.progress = ttk.Progressbar(self.frame, mode='determinate', length=300)
+            self.progress.pack(fill='x', expand=True)
+            
+            # Row count label below progress bar
+            self.row_label = ttk.Label(self.frame, text='Processing row: 0')
+            self.row_label.pack(fill='x', expand=True, pady=(5, 0))
+            # Keep window small and above
+            try:
+                self.attributes('-topmost', True)
+            except Exception:
+                pass
+
+        def show(self):
+            # Center over parent and force window to appear
+            try:
+                self.update_idletasks()
+                parent = self.master
+                x = parent.winfo_rootx() + (parent.winfo_width() - self.winfo_width()) // 2
+                y = parent.winfo_rooty() + (parent.winfo_height() - self.winfo_height()) // 2
+                self.geometry(f'+{x}+{y}')
+                self.deiconify()
+                self.lift()
+                self.focus_force()
+                self.update()
+            except Exception:
+                pass
+
+        def update_message(self, text, row=None, total=None):
+            try:
+                self.label.config(text=text)
+                if row is not None:
+                    self.row_label.configure(text=f'Processing row: {row}')
+                    if total:
+                        # Update progress bar
+                        progress = (row / total) * 100
+                        self.progress['value'] = progress
+                        self.row_label.configure(text=f'Processing row: {row} of {total}')
+                self.lift()
+                self.update_idletasks()
+                self.update()
+            except Exception:
+                pass
+
+        def close(self):
+            try:
+                self.grab_release()
+            except Exception:
+                pass
+            try:
+                self.destroy()
+            except Exception:
+                pass
+
+    def import_csv_file(self, path, progress_callback=None):
+        """
+        Parse the CSV at `path` and insert/update applications, application-department links, and integrations.
+        Multiple rows for the same application are allowed (multiple integrations). Missing numeric fields will be coerced or defaulted.
+        """
+        import csv
+        import time
+        created_apps = 0
+        updated_apps = 0
+        created_integrations = 0
+        updated_integrations = 0
+        errors = []
+
+        # Expected header columns (case-insensitive match)
+        expected_cols = [
+            'name', 'vendor', 'business_unit', 'score', 'need', 'criticality', 'installed',
+            'disasterrecovery', 'safety', 'security', 'monetary', 'customerservice', 'notes',
+            'integration_name', 'integration_vendor', 'integration_score', 'integration_need', 'integration_criticality',
+            'integration_installed', 'integration_dr', 'integration_safety', 'integration_security', 'integration_monetary',
+            'integration_customerservice', 'integration_risk', 'integration_last_modified'
+        ]
+
+        # Initialize connection as None for proper cleanup
+        conn = None
+        cur = None
+
+        # First count total rows
+        total_rows = 0
+        try:
+            with open(path, newline='', encoding='utf-8') as fh:
+                total_rows = sum(1 for _ in csv.DictReader(fh))
+        except Exception as e:
+            return {'error': f'Failed to count rows: {e}'}
+
+        # Initialize database schema first
+        database.initialize_database()
+        print("DEBUG: Database schema initialized")
+        
+        # Debug: Print out header fields
+        with open(path, newline='', encoding='utf-8') as fh:
+            reader = csv.DictReader(fh)
+            if reader.fieldnames:
+                print("DEBUG: CSV Headers:", reader.fieldnames)
+        
+        # Open file and process rows
+        try:
+            with open(path, newline='', encoding='utf-8') as fh:
+                reader = csv.DictReader(fh)
+                if reader.fieldnames is None:
+                    return {'error': 'CSV file has no header row.'}
+                # normalize header names - keep both normalized and original versions
+                header_map = {}
+                for h in reader.fieldnames:
+                    normalized = h.strip().lower().replace(' ', '').replace('-', '').replace('_', '')
+                    header_map[normalized] = h
+                    header_map[h.strip()] = h  # Also keep original version
+
+                # check presence of minimal columns - check both normalized and original
+                if not any(key in header_map for key in ['appname', 'app_name', 'name']):
+                    return {'error': 'CSV must include an App Name column (e.g., "app_name", "name", or "App Name").'}
+
+                # Create a new database connection for this thread with timeout and immediate mode
+                import sqlite3
+                conn = sqlite3.connect(database.DB_NAME, timeout=60.0, isolation_level='IMMEDIATE')  # Longer timeout and immediate mode
+                conn.execute('PRAGMA busy_timeout = 60000')  # Set busy timeout to 60 seconds
+                cur = conn.cursor()
+
+                # helper to find or create business unit with retries
+                def ensure_business_unit(name):
+                    if not name:
+                        return None
+                    try:
+                        # First try to find existing business unit
+                        cur.execute('SELECT id FROM business_units WHERE name = ?', (name,))
+                        row = cur.fetchone()
+                        if row:
+                            return row[0]
+                        
+                        # Create new business unit with retries
+                        max_retries = 3
+                        last_error = None
+                        for retry in range(max_retries):
+                            try:
+                                print(f"DEBUG: Attempting to create business unit: {name}")
+                                cur.execute('INSERT INTO business_units (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)', (name,))
+                                conn.commit()  # Commit immediately to prevent locks
+                                new_id = cur.lastrowid
+                                print(f"DEBUG: Created business unit {name} with ID {new_id}")
+                                return new_id
+                            except sqlite3.OperationalError as e:
+                                last_error = e
+                                if 'database is locked' in str(e) and retry < max_retries - 1:
+                                    time.sleep(0.5 * (retry + 1))  # Exponential backoff
+                                    continue
+                                print(f"DEBUG: Database lock error creating business unit {name}: {e}")
+                                raise
+                            except sqlite3.IntegrityError as e:
+                                # In case of race condition where unit was created between select and insert
+                                if 'UNIQUE constraint failed' in str(e):
+                                    print(f"DEBUG: Business unit {name} already exists (race condition)")
+                                    cur.execute('SELECT id FROM business_units WHERE name = ?', (name,))
+                                    row = cur.fetchone()
+                                    if row:
+                                        return row[0]
+                                raise
+                        if last_error:
+                            raise last_error
+                    except Exception as e:
+                        print(f"DEBUG: Failed to create/find business unit '{name}': {e}")
+                        errors.append(f"Failed to create/find business unit '{name}': {e}")
+                        return None
+
+                # helper to parse int-like fields
+                def parse_int(v, default=0):
+                    try:
+                        return int(float(str(v)))
+                    except Exception:
+                        return default
+
+                # helper to parse float
+                def parse_float(v, default=0.0):
+                    try:
+                        return float(v)
+                    except Exception:
+                        return default
+
+                # cache for app name -> id
+                app_cache = {}
+
+                for rownum, raw in enumerate(reader, start=2):
+                    try:
+                        # Map fields flexibly with normalized keys
+                        def get(*opts):
+                            # Try original and normalized versions of each option
+                            for opt in opts:
+                                # Try exact match first
+                                if opt in header_map and raw.get(header_map[opt]) is not None:
+                                    return raw[header_map[opt]]
+                                # Try normalized version
+                                normalized = opt.strip().lower().replace(' ', '').replace('-', '').replace('_', '')
+                                if normalized in header_map and raw.get(header_map[normalized]) is not None:
+                                    return raw[header_map[normalized]]
+                            return ''
+
+                        app_name = get('name', 'app_name', 'App Name') or ''
+                        vendor = get('vendor', 'Vendor') or ''
+                        bu_name = get('business_unit', 'businessunit', 'Business Unit') or ''
+                        notes = get('notes', 'Notes') or ''
+
+                        # Application rating fields
+                        score = parse_int(get('score', 'Score'), 0)
+                        need = parse_int(get('need', 'Need'), 0)
+                        criticality = parse_int(get('criticality', 'Criticality'), 0)
+                        installed = parse_int(get('installed', 'Installed'), 0)
+                        disaster_recovery = parse_int(get('disasterrecovery', 'disaster_recovery', 'dr', 'Disaster Recovery'), 0)
+                        safety = parse_int(get('safety', 'Safety'), 0)
+                        security = parse_int(get('security', 'Security'), 0)
+                        monetary = parse_int(get('monetary', 'Monetary'), 0)
+                        customer_service = parse_int(get('customerservice', 'customer_service', 'Customer Service'), 0)
+
+                        # Integration fields
+                        int_name = get('integration_name', 'integration') or ''
+                        int_vendor = get('integration_vendor') or ''
+                        # parse integration score only if provided; keep None to indicate 'not provided'
+                        int_score_raw = get('integration_score')
+                        int_score = parse_int(int_score_raw, 0) if int_score_raw not in (None, '') else None
+                        int_need = parse_int(get('integration_need'), 0)
+                        int_criticality = parse_int(get('integration_criticality'), 0)
+                        int_installed = parse_int(get('integration_installed'), 0)
+                        int_dr = parse_int(get('integration_dr'), 0)
+                        int_safety = parse_int(get('integration_safety'), 0)
+                        int_security = parse_int(get('integration_security'), 0)
+                        int_monetary = parse_int(get('integration_monetary'), 0)
+                        int_customer_service = parse_int(get('integration_customerservice'), 0)
+                        int_risk = None
+                        # integration risk may be provided
+                        ir = get('integration_risk')
+                        int_risk = parse_float(ir, 0.0) if ir not in (None, '') else None
+                        last_mod = get('integration_last_modified') or get('last_modified') or None
+
+                        # Ensure application exists (by name). If multiple apps have same name, pick first.
+                        app_id = app_cache.get(app_name)
+                        if not app_id:
+                            cur.execute('SELECT id FROM applications WHERE name = ?', (app_name,))
+                            r = cur.fetchone()
+                            if r:
+                                app_id = r[0]
+                                app_cache[app_name] = app_id
+                                # Update application fields with provided values
+                                try:
+                                    database.update_application(app_id, {
+                                        'vendor': vendor,
+                                        'score': score,
+                                        'need': need,
+                                        'criticality': criticality,
+                                        'installed': installed,
+                                        'disaster_recovery': disaster_recovery,
+                                        'safety': safety,
+                                        'security': security,
+                                        'monetary': monetary,
+                                        'customer_service': customer_service,
+                                        'notes': notes
+                                    })
+                                    updated_apps += 1
+                                except Exception:
+                                    pass
+                            else:
+                                # Create new application via helper; it expects dept ids list and returns app ids
+                                # Ensure business unit exists and establish link after creation
+                                try:
+                                    # Try to create application with retries
+                                    max_retries = 3
+                                    for retry in range(max_retries):
+                                        try:
+                                            bu_id = ensure_business_unit(bu_name) if bu_name else None
+                                            dept_ids = [bu_id] if bu_id else []
+                                            # Direct SQL insert with our connection
+                                            cur.execute('''
+                                                INSERT INTO applications 
+                                                (name, vendor, score, need, criticality, installed, disaster_recovery, 
+                                                safety, security, monetary, customer_service, notes)
+                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                            ''', (app_name, vendor, score, need, criticality, installed, disaster_recovery,
+                                                safety, security, monetary, customer_service, notes))
+                                            app_id = cur.lastrowid
+                                            
+                                            # Create business unit links if needed
+                                            if dept_ids:
+                                                for dept_id in dept_ids:
+                                                    if dept_id:  # Only if we got a valid department ID
+                                                        try:
+                                                            # Check if link already exists
+                                                            cur.execute(
+                                                                'SELECT 1 FROM application_business_units WHERE app_id = ? AND unit_id = ?',
+                                                                (app_id, dept_id)
+                                                            )
+                                                            if not cur.fetchone():
+                                                                cur.execute(
+                                                                    'INSERT INTO application_business_units (app_id, unit_id) VALUES (?, ?)',
+                                                                    (app_id, dept_id)
+                                                                )
+                                                        except Exception as e:
+                                                            errors.append(f"Failed to link app {app_name} to business unit: {e}")
+                                            
+                                            conn.commit()
+                                            created_apps += 1
+                                            app_cache[app_name] = app_id
+                                            break
+                                        except sqlite3.OperationalError as e:
+                                            if 'database is locked' in str(e) and retry < max_retries - 1:
+                                                time.sleep(0.5 * (retry + 1))  # Exponential backoff
+                                                continue
+                                            raise
+                                except Exception as e:
+                                    errors.append(f"Row {rownum}: Failed to create application '{app_name}': {e}")
+                                    continue
+
+                        # Ensure business unit link exists
+                        if bu_name and app_id:
+                            try:
+                                print(f"DEBUG: Ensuring business unit exists for app {app_name}: {bu_name}")
+                                bu_id = ensure_business_unit(bu_name)
+                                if bu_id:
+                                    print(f"DEBUG: Linking app {app_name} to business unit {bu_name} (ID: {bu_id})")
+                                    # Insert link if not exists
+                                    cur.execute('SELECT 1 FROM application_business_units WHERE app_id = ? AND unit_id = ?', (app_id, bu_id))
+                                    if not cur.fetchone():
+                                        cur.execute('INSERT INTO application_business_units (app_id, unit_id) VALUES (?, ?)', (app_id, bu_id))
+                                        conn.commit()  # Commit the link
+                                        print(f"DEBUG: Successfully linked app {app_name} to business unit {bu_name}")
+                            except Exception as e:
+                                print(f"DEBUG: Failed to link business unit {bu_name} to app {app_name}: {e}")
+                                errors.append(f"Failed to link business unit {bu_name} to app {app_name}: {e}")
+                                pass
+
+                            # If integration provided, insert it
+                            if int_name:
+                                print(f"DEBUG: Processing integration {int_name} for app {app_name} (ID: {app_id})")
+                                try:
+                                    # Calculate risk score
+                                    numeric_vals = [int_score or 0, int_need, int_criticality, int_installed, 
+                                                  int_dr, int_safety, int_security, int_monetary, 
+                                                  int_customer_service]
+                                    try:
+                                        risk_score = sum(v or 0 for v in numeric_vals) / len(numeric_vals)
+                                    except Exception:
+                                        risk_score = 0.0
+                                        
+                                    print(f"DEBUG: Inserting integration with risk score {risk_score}")
+                                    # Insert new integration
+                                    cur.execute('''
+                                        INSERT INTO system_integrations 
+                                        (parent_app_id, name, vendor, score, need,
+                                         criticality, installed, disaster_recovery,
+                                         safety, security, monetary, customer_service,
+                                         notes, risk_score, last_modified)
+                                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                    ''', (app_id, int_name, int_vendor, int_score or 0,
+                                         int_need or 0, int_criticality or 0, int_installed or 0,
+                                         int_dr or 0, int_safety or 0, int_security or 0,
+                                         int_monetary or 0, int_customer_service or 0,
+                                         '', risk_score, last_mod or datetime.now().isoformat()))
+                                    created_integrations += 1
+                                    conn.commit()
+                                    print(f"DEBUG: Successfully created integration {int_name}")
+                                except Exception as e:
+                                    print(f"DEBUG: Failed to create integration: {e}")
+                                    errors.append(f"Row {rownum}: Failed to create integration '{int_name}': {e}")
+                                    # Don't continue here - let the row processing complete
+                                    
+                    except Exception as e:
+                        errors.append(f"Row {rownum}: {e}")
+                        continue  # Only continue on row-level errors
+                        
+                    # report progress every 25 rows
+                    try:
+                        if progress_callback and rownum % 25 == 0:
+                            progress_callback(rownum, total_rows)
+                    except Exception:
+                        pass
+
+                # commit once after processing
+                try:
+                    if conn:
+                        conn.commit()
+                except Exception as e:
+                    errors.append(f"Failed to commit changes: {e}")
+                finally:
+                    try:
+                        if conn:
+                            conn.close()
+                    except Exception:
+                        pass
+
+                # return summary
+                return {
+                    'created_apps': created_apps,
+                    'updated_apps': updated_apps,
+                    'created_integrations': created_integrations,
+                    'updated_integrations': updated_integrations,
+                    'errors': errors
+                }
+        except Exception as e:
+            # Ensure connection is closed on error
+            try:
+                if conn:
+                    conn.close()
+            except Exception:
+                pass
+            return {'error': str(e)}
+
+    def import_csv_worker(self, path):
+        """Worker run on background thread; schedules UI updates on main thread when finished."""
+        # create a progress window on main thread, then run import and close
+        # store the temporary window on the instance so nested functions can access it
+        def refresh_after_import():
+            """Schedule refresh operations on the main thread"""
+            self.refresh_table()  # Refresh the main application table
+            self.department_listbox.delete(0, 'end')  # Clear and refresh department listbox
+            for dept_id, dept_name in self.get_departments():
+                self.department_listbox.insert('end', dept_name)
+            
+        try:
+            self._import_progress_win = None
+        except Exception:
+            pass
+
+        def show_progress():
+            try:
+                self._import_progress_win = self.ProgressWindow(self, title='Importing CSV', message='Starting import...')
+                self._import_progress_win.show()
+            except Exception:
+                self._import_progress_win = None
+                
+        def on_import_complete():
+            """Called when import is finished"""
+            try:
+                refresh_after_import()
+            except Exception as e:
+                print(f"DEBUG: Error in refresh after import: {e}")
+            finally:
+                if hasattr(self, '_import_progress_win') and self._import_progress_win:
+                    try:
+                        self._import_progress_win.close()
+                    except Exception:
+                        pass
+
+        def update_progress(rows_processed, total_rows):
+            try:
+                win = getattr(self, '_import_progress_win', None)
+                if win is not None:
+                    try:
+                        win.update_message(f'Importing data...', rows_processed, total_rows)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        def close_progress():
+            try:
+                win = getattr(self, '_import_progress_win', None)
+                if win is not None:
+                    try:
+                        win.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # show the progress window on the main thread and ensure it's visible
+        try:
+            self.after(1, show_progress)
+            self.update_idletasks()
+        except Exception:
+            pass
+
+        # run import, passing progress callback
+        try:
+            result = self.import_csv_file(path, progress_callback=update_progress)
+        except Exception as e:
+            result = {'error': str(e)}
+
+        # close progress window on main thread
+        try:
+            self.after(50, close_progress)
+        except Exception:
+            pass
+
+        def finish():
+            # finish runs on main thread via self.after
+            try:
+                if isinstance(result, dict) and result.get('error'):
+                    messagebox.showerror('Import Error', result.get('error'))
+                    return
+                created_apps = result.get('created_apps', 0)
+                updated_apps = result.get('updated_apps', 0)
+                created_integrations = result.get('created_integrations', 0)
+                updated_integrations = result.get('updated_integrations', 0)
+                errors = result.get('errors', [])
+                summary = f"Import complete. Apps created: {created_apps}, Apps updated: {updated_apps}, Integrations created: {created_integrations}, Integrations updated: {updated_integrations}."
+                if errors:
+                    summary += f"\nErrors: {len(errors)} (see console for details)."
+                    for e in errors:
+                        print('IMPORT ERROR:', e)
+                messagebox.showinfo('Import Finished', summary)
+            finally:
+                # Always try to refresh UI and close progress window
+                try:
+                    # Close progress window first
+                    if hasattr(self, '_import_progress_win') and self._import_progress_win:
+                        self._import_progress_win.close()
+                except Exception:
+                    pass
+                try:
+                    # Update all UI elements
+                    refresh_after_import()  # This refreshes table and department list
+                    self.refresh_integration_table()  # Refresh integrations if any are showing
+                except Exception as e:
+                    print(f"DEBUG: Error refreshing UI after import: {e}")
+
+        # schedule finish on main thread
+        try:
+            self.after(100, finish)
+        except Exception:
+            # if after isn't available, call directly (best-effort)
+            finish()
     
     def sort_integration_table(self, col, reverse=False):
         """

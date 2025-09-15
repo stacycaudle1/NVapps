@@ -1,0 +1,4 @@
+name,vendor,business_unit,score,need,criticality,installed,disasterrecovery,safety,security,monetary,customerservice,notes,integration_name,integration_vendor,integration_score,integration_need,integration_criticality,integration_installed,integration_dr,integration_safety,integration_security,integration_monetary,integration_customerservice,integration_risk,integration_last_modified
+TestApp1,TestVendor1,IT,8,7,6,5,4,3,2,1,9,Test notes 1,TestInt1,IntVendor1,7,6,5,4,3,2,1,8,9,,2025-09-15
+TestApp2,TestVendor2,HR,9,8,7,6,5,4,3,2,1,Test notes 2,TestInt2,IntVendor2,8,7,6,5,4,3,2,1,9,,2025-09-15
+TestApp3,TestVendor3,Finance,7,6,5,4,3,2,1,9,8,Test notes 3,TestInt3,IntVendor3,9,8,7,6,5,4,3,2,1,,2025-09-15
