@@ -151,6 +151,113 @@ class AppTracker(tk.Tk):
 
         ttk.Button(popup, text='Add', command=add_dept, style='Primary.TButton').pack(padx=10, pady=10)
 
+    def create_table_with_scrollbars(self, parent, columns, widths=None, sort_handler=None, pack_opts=None,
+                                     anchors=None, formatters=None, zebra=True, zebra_colors=("#ffffff", "#f7f7f7")):
+        """Create a Treeview inside a scrollable container with V/H scrollbars.
+        Returns (container_frame, tree).
+        - parent: parent widget
+        - columns: sequence of column names
+        - widths: optional dict of {col: width}
+        - sort_handler: callable(tree, col, reverse) used by header commands; defaults to self.report_sort_table
+        - pack_opts: optional dict passed to container.pack
+        - anchors: optional dict of {col: 'w'|'center'|'e'} to override alignment
+        - formatters: optional dict of {col: callable(value) -> formatted_value}
+        - zebra: whether to enable zebra helper methods on the tree
+        - zebra_colors: tuple (even_bg, odd_bg)
+        """
+        container = ttk.Frame(parent)
+        # Default pack options
+        opts = {'fill': 'both', 'expand': True}
+        if pack_opts:
+            opts.update(pack_opts)
+        container.pack(**opts)
+
+        tree = ttk.Treeview(container, columns=columns, show='headings')
+        # Configure columns
+        widths = widths or {}
+        anchors = anchors or {}
+        for col in columns:
+            handler = sort_handler or (lambda tr, c, r: self.report_sort_table(tr, c, r))
+            tree.heading(col, text=col, anchor='w', command=lambda c=col: handler(tree, c, False))
+            # Guess alignment: text left, numeric centered
+            left_cols = {'Business Unit', 'Division', 'Integration Name', 'Vendor', 'Status', 'Notes', 'System Name'}
+            anchor = anchors.get(col, ('w' if col in left_cols else 'center'))
+            w = widths.get(col, 120)
+            tree.column(col, width=w, anchor=anchor, stretch=True if col in left_cols else False)
+
+        # Scrollbars
+        vsb = ttk.Scrollbar(container, orient='vertical', command=tree.yview)
+        hsb = ttk.Scrollbar(container, orient='horizontal', command=tree.xview)
+        tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+        tree.pack(side='left', fill='both', expand=True)
+        vsb.pack(side='right', fill='y')
+        hsb.pack(side='bottom', fill='x')
+
+        # Auto-hide horizontal scrollbar logic
+        def _update_hsb_visibility(event=None):
+            try:
+                total_width = 0
+                for c in columns:
+                    total_width += int(tree.column(c, 'width'))
+                visible = tree.winfo_width() or container.winfo_width()
+                if total_width > max(visible, 1):
+                    if not hsb.winfo_manager():
+                        hsb.pack(side='bottom', fill='x')
+                else:
+                    if hsb.winfo_manager():
+                        hsb.pack_forget()
+            except Exception:
+                # If anything goes wrong, keep the scrollbar visible
+                if not hsb.winfo_manager():
+                    hsb.pack(side='bottom', fill='x')
+
+        tree.bind('<Configure>', _update_hsb_visibility)
+        container.bind('<Configure>', _update_hsb_visibility)
+        container.after(50, _update_hsb_visibility)
+
+        # Attach helpers (returned to caller)
+        col_order = list(columns)
+        col_formatters = formatters or {}
+
+        def _apply_format(values):
+            try:
+                if isinstance(values, dict):
+                    seq = [values.get(col) for col in col_order]
+                else:
+                    seq = list(values)
+                out = []
+                for i, col in enumerate(col_order):
+                    val = seq[i] if i < len(seq) else None
+                    fmt = col_formatters.get(col)
+                    try:
+                        out.append(fmt(val) if fmt else val)
+                    except Exception:
+                        out.append(val)
+                return tuple(out)
+            except Exception:
+                return values
+
+        if zebra:
+            def _apply_zebra():
+                try:
+                    even_bg, odd_bg = zebra_colors
+                    tree.tag_configure('zebra_even', background=even_bg)
+                    tree.tag_configure('zebra_odd', background=odd_bg)
+                    for idx, item in enumerate(tree.get_children()):
+                        tag = 'zebra_odd' if idx % 2 else 'zebra_even'
+                        current = tree.item(item, 'tags') or ()
+                        # Preserve existing tags (e.g., risk colors) and append zebra tag
+                        if tag not in current:
+                            tree.item(item, tags=(*current, tag))
+                except Exception:
+                    pass
+            apply_zebra = _apply_zebra
+        else:
+            apply_zebra = lambda: None
+
+        api = {'format': _apply_format, 'apply_zebra': apply_zebra}
+        return container, tree, api
+
     def report_sort_table(self, tree, col, reverse):
         # Sort function specifically for the report window
         try:
@@ -336,6 +443,57 @@ class AppTracker(tk.Tk):
         report_win.title('System Reports')
         report_win.configure(bg=WIN_BG)
         report_win.geometry('1200x800')
+        # Ensure we have an in-memory store for report refresh timestamps and labels
+        if not hasattr(self, '_report_refresh_state'):
+            # keys: 'risk', 'bu', 'crit' -> {'ts': datetime or None, 'label': widget}
+            self._report_refresh_state = {}
+
+        # Helper to format elapsed time
+        def _format_elapsed(ts):
+            if not ts:
+                return ''
+            delta = datetime.now() - ts
+            seconds = int(delta.total_seconds())
+            if seconds < 60:
+                return f"{seconds}s ago"
+            minutes, sec = divmod(seconds, 60)
+            if minutes < 60:
+                return f"{minutes}m {sec}s ago"
+            hours, minutes = divmod(minutes, 60)
+            if hours < 24:
+                return f"{hours}h {minutes}m ago"
+            days, hours = divmod(hours, 24)
+            return f"{days}d {hours}h ago"
+
+        # Update a specific label from the stored timestamp
+        def _update_report_label(key):
+            state = self._report_refresh_state.get(key)
+            if not state or 'label' not in state:
+                return
+            lbl = state['label']
+            ts = state.get('ts')
+            try:
+                if ts:
+                    lbl.config(text=f"Last refresh: {ts.strftime('%Y-%m-%d %H:%M:%S')} ({_format_elapsed(ts)})")
+                else:
+                    lbl.config(text='Last refresh: N/A')
+            except Exception:
+                pass
+
+        # Periodically update the relative elapsed text for all report labels while the window exists
+        def _refresh_elapsed_labels():
+            try:
+                if not report_win.winfo_exists():
+                    return
+                for k in list(self._report_refresh_state.keys()):
+                    _update_report_label(k)
+            except Exception:
+                pass
+            try:
+                report_win.after(1000, _refresh_elapsed_labels)
+            except Exception:
+                # If scheduling fails, silently stop
+                pass
         
         # Create a notebook for different report tabs
         notebook = ttk.Notebook(report_win)
@@ -372,40 +530,36 @@ class AppTracker(tk.Tk):
                                    width=15, state='readonly')
         risk_options.pack(side='left', padx=5)
 
-        # Create the risk-filtered table
+        # Create the risk-filtered table with shared helper
         columns = ('Business Unit', 'Division', 'Integration Name', 'Vendor', 
                   'Score', 'Criticality', 'Risk', 'Notes')
-        risk_tree = ttk.Treeview(risk_frame, columns=columns, show='headings')
-        # Configure columns with appropriate widths and anchors
         widths = {
             'Business Unit': 200, 'Division': 180, 'Integration Name': 200,
             'Vendor': 150, 'Score': 80, 'Criticality': 80, 'Risk': 80, 'Notes': 200
         }
-        for col in columns:
-            risk_tree.heading(col, text=col, anchor='w',
-                            command=lambda c=col: self.report_sort_table(risk_tree, c, False))
-            w = widths.get(col, 100)
-            # Use left alignment for text columns, center for numeric
-            anchor = 'w' if col in ('Business Unit', 'Division', 'Integration Name', 'Vendor', 'Notes') else 'center'
-            risk_tree.column(col, width=w, anchor=anchor, stretch=True if col == 'Notes' else False)
-
-        # Create a container for the table and scrollbars
-        table_container = ttk.Frame(risk_frame)
-        table_container.pack(fill='both', expand=True, padx=15, pady=5)
-
-        # Add scrollbars
-        vsb = ttk.Scrollbar(table_container, orient='vertical', command=risk_tree.yview)
-        hsb = ttk.Scrollbar(table_container, orient='horizontal', command=risk_tree.xview)
-        risk_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-
-        # Pack layout for table and scrollbars
-        risk_tree.pack(side='left', fill='both', expand=True)
-        vsb.pack(side='right', fill='y')
-        hsb.pack(side='bottom', fill='x')
+        # Define consistent numeric formatters for this table
+        risk_formatters = {
+            'Score': lambda v: '' if v in (None, '') else f"{int(float(v))}",
+            'Criticality': lambda v: '' if v in (None, '') else f"{int(float(v))}",
+            'Risk': lambda v: '' if v in (None, '') else f"{float(v):.1f}",
+        }
+        _, risk_tree, risk_api = self.create_table_with_scrollbars(
+            risk_frame,
+            columns,
+            widths=widths,
+            sort_handler=self.report_sort_table,
+            formatters=risk_formatters,
+            pack_opts={'fill': 'both', 'expand': True, 'padx': 15, 'pady': 5}
+        )
 
         # Small label to show last refresh time for Risk Range
         risk_last_lbl = ttk.Label(controls_frame, text='Last refresh: N/A')
         risk_last_lbl.pack(side='left', padx=(10,0))
+        # Register label widget in in-memory report refresh state
+        try:
+            self._report_refresh_state['risk'] = {'label': risk_last_lbl, 'ts': None}
+        except Exception:
+            pass
 
         def update_risk_table(*args):
             risk_tree.delete(*risk_tree.get_children())
@@ -455,16 +609,18 @@ class AppTracker(tk.Tk):
                 return
 
             for row in results:
-                values = (
+                # Build raw values with numeric fields unformatted; let the helper apply formatting
+                raw_values = (
                     row['business_unit'],
                     row['division'],
                     row['integration_name'],
                     row['vendor'],
-                    row['score'],
-                    row['criticality'],
-                    f"{float(row['risk']):.1f}" if row['risk'] is not None else "0.0",
+                    row['score'],  # int-like
+                    row['criticality'],  # int-like
+                    (row['risk'] if row['risk'] is not None else 0.0),  # float-like
                     row['notes'] or ""
                 )
+                values = risk_api['format'](raw_values)
                 tag = get_risk_color(row['risk'])
                 # Only pass tag if it's not None
                 if tag:
@@ -472,15 +628,26 @@ class AppTracker(tk.Tk):
                 else:
                     risk_tree.insert('', 'end', values=values)
 
+            # Apply zebra striping for readability (preserves risk color tags)
+            try:
+                risk_api['apply_zebra']()
+            except Exception:
+                pass
+
             conn.close()
 
             # Configure row colors based on risk
             risk_tree.tag_configure('red', background='#ffcccc')
             risk_tree.tag_configure('yellow', background='#fff2cc')
             risk_tree.tag_configure('green', background='#ccffcc')
-            # Update last refresh label
+            # Update last refresh timestamp in in-memory state and refresh label text
             try:
-                risk_last_lbl.config(text=f"Last refresh: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                state = self._report_refresh_state.get('risk')
+                if state is None:
+                    self._report_refresh_state['risk'] = {'label': risk_last_lbl, 'ts': datetime.now()}
+                else:
+                    state['ts'] = datetime.now()
+                _update_report_label('risk')
             except Exception:
                 pass
 
@@ -511,15 +678,30 @@ class AppTracker(tk.Tk):
         _legend_chip_bu(bu_legend, 'Med (50–69)', '#fff2cc')
         _legend_chip_bu(bu_legend, 'Low (1–49)', '#ccffcc')
         
-        # Business Unit Risk Tree
-        bu_tree = ttk.Treeview(bu_frame, columns=('Business Unit', 'App Count', 'Avg Risk', 'Status'), show='headings')
-        for col in bu_tree['columns']:
-            bu_tree.heading(col, text=col, command=lambda c=col: self.report_sort_table(bu_tree, c, False))
-        bu_tree.pack(fill='both', expand=True, padx=15, pady=(0, 15))
+        # Business Unit Risk Tree using shared helper
+        bu_columns = ('Business Unit', 'App Count', 'Avg Risk', 'Status')
+        bu_widths = {'Business Unit': 320, 'App Count': 110, 'Avg Risk': 110, 'Status': 120}
+        bu_formatters = {
+            'App Count': lambda v: '' if v in (None, '') else f"{int(v)}",
+            'Avg Risk': lambda v: '' if v in (None, '') else f"{float(v):.1f}",
+        }
+        _, bu_tree, bu_api = self.create_table_with_scrollbars(
+            bu_frame,
+            bu_columns,
+            widths=bu_widths,
+            formatters=bu_formatters,
+            sort_handler=self.report_sort_table,
+            pack_opts={'fill': 'both', 'expand': True, 'padx': 15, 'pady': 5}
+        )
         
         # System Criticality Tab
         crit_frame = ttk.Frame(notebook)
         notebook.add(crit_frame, text='System Criticality')
+        # Ensure Risk Range is shown by default (top-most view)
+        try:
+            notebook.select(risk_frame)
+        except Exception:
+            pass
         
         # Add header to criticality report
         crit_header = tk.Frame(crit_frame, bg=WIN_BG)
@@ -543,8 +725,15 @@ class AppTracker(tk.Tk):
             try:
                 self.update_criticality_chart(chart_frame, sort_var.get())
             finally:
+                # Update in-memory timestamp and label
                 try:
-                    crit_last_lbl.config(text=f"Last refresh: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                    state = self._report_refresh_state.get('crit')
+                    if state is None:
+                        # crit_last_lbl may not yet be bound in closure when this is first defined; handle later
+                        self._report_refresh_state['crit'] = {'label': None, 'ts': datetime.now()}
+                    else:
+                        state['ts'] = datetime.now()
+                    _update_report_label('crit')
                 except Exception:
                     pass
 
@@ -554,6 +743,15 @@ class AppTracker(tk.Tk):
         refresh_btn.pack(side='left', padx=5)
         crit_last_lbl = ttk.Label(controls_frame, text='Last refresh: N/A')
         crit_last_lbl.pack(side='left', padx=(8,0))
+        # Register crit label widget
+        try:
+            st = self._report_refresh_state.get('crit')
+            if st is None:
+                self._report_refresh_state['crit'] = {'label': crit_last_lbl, 'ts': None}
+            else:
+                st['label'] = crit_last_lbl
+        except Exception:
+            pass
         
         # Frame for matplotlib chart
         chart_frame = ttk.Frame(crit_frame)
@@ -576,7 +774,8 @@ class AppTracker(tk.Tk):
             for bu_name, count, avg_risk in results:
                 if avg_risk is None or avg_risk < 1:
                     status = 'No Data'
-                    bu_tree.insert('', 'end', values=(bu_name, count, '0', status))
+                    raw_values = (bu_name, count, 0.0, status)
+                    bu_tree.insert('', 'end', values=bu_api['format'](raw_values))
                 else:
                     try:
                         avg = float(avg_risk)
@@ -589,10 +788,12 @@ class AppTracker(tk.Tk):
                         status = 'Med'
                     else:
                         status = 'Low'
+                    raw_values = (bu_name, count, avg, status)
+                    formatted = bu_api['format'](raw_values)
                     if tag:
-                        bu_tree.insert('', 'end', values=(bu_name, count, f'{avg:.1f}', status), tags=(tag,))
+                        bu_tree.insert('', 'end', values=formatted, tags=(tag,))
                     else:
-                        bu_tree.insert('', 'end', values=(bu_name, count, f'{avg:.1f}', status))
+                        bu_tree.insert('', 'end', values=formatted)
             # Configure row colors based on risk (do this once per refresh)
             bu_tree.tag_configure('red', background='#ffcccc')
             bu_tree.tag_configure('yellow', background='#fff2cc')
@@ -602,9 +803,19 @@ class AppTracker(tk.Tk):
             bu_tree.tag_configure('red', background='#ffcccc')
             bu_tree.tag_configure('yellow', background='#fff2cc')
             bu_tree.tag_configure('green', background='#ccffcc')
-            # Update BU last-refresh label if available
+            # Zebra striping
             try:
-                bu_last_lbl.config(text=f"Last refresh: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                bu_api['apply_zebra']()
+            except Exception:
+                pass
+            # Update BU last-refresh timestamp in in-memory state and update label
+            try:
+                state = self._report_refresh_state.get('bu')
+                if state is None:
+                    self._report_refresh_state['bu'] = {'label': None, 'ts': datetime.now()}
+                else:
+                    state['ts'] = datetime.now()
+                _update_report_label('bu')
             except Exception:
                 pass
 
@@ -614,6 +825,15 @@ class AppTracker(tk.Tk):
         ttk.Button(bu_controls, text='Refresh', command=update_bu_table, style='Primary.TButton').pack(side='left')
         bu_last_lbl = ttk.Label(bu_controls, text='Last refresh: N/A')
         bu_last_lbl.pack(side='left', padx=(8,0))
+        # Register BU label widget for elapsed updates
+        try:
+            st = self._report_refresh_state.get('bu')
+            if st is None:
+                self._report_refresh_state['bu'] = {'label': bu_last_lbl, 'ts': None}
+            else:
+                st['label'] = bu_last_lbl
+        except Exception:
+            pass
 
         # Initial population
         update_bu_table()
@@ -622,12 +842,6 @@ class AppTracker(tk.Tk):
         tree_style = ttk.Style()
         tree_style.configure('Treeview', rowheight=28, font=('Segoe UI', 9))
         tree_style.configure('Treeview.Heading', font=('Segoe UI', 10, 'bold'))
-
-        # Add a scrollbar to the business unit tree
-        bu_vsb = ttk.Scrollbar(bu_frame, orient='vertical', command=bu_tree.yview)
-        bu_tree.configure(yscrollcommand=bu_vsb.set)
-        bu_tree.pack(side='left', fill='both', expand=True)
-        bu_vsb.pack(side='right', fill='y')
 
         # Create initial criticality chart
         self.update_criticality_chart(chart_frame, sort_var.get())
@@ -736,11 +950,322 @@ class AppTracker(tk.Tk):
         reports_top_frame = ttk.Frame(self.tab_reports)
         reports_top_frame.pack(fill='x', pady=10, padx=15)
         
-        # Add Show Report button to the top left of the Reports tab
-        show_report_btn = ttk.Button(reports_top_frame, text='Show Report', command=self.show_report, style='Primary.TButton')
-        show_report_btn.pack(side='left', padx=0)
+        # Add Show Report button to the top left of the Reports tab, and a Print Reports button beneath it
+        left_btns_frame = ttk.Frame(reports_top_frame)
+        left_btns_frame.pack(side='left')
+        # Both buttons share the same style and width for consistent appearance
+        btn_width = 18
+        show_report_btn = ttk.Button(left_btns_frame, text='Show Report', command=self.show_report, style='Primary.TButton', width=btn_width)
+        show_report_btn.pack(side='top', padx=0, pady=(0,6))
 
-        # Add button to generate smoke test data for reports
+        def on_print_reports():
+            # Open reports view first as convenience, then offer user-defined export options
+            try:
+                self.show_report()
+            finally:
+                try:
+                    from tkinter import filedialog
+                    import os
+                    # Ask for output folder first
+                    outdir = filedialog.askdirectory(title='Select output folder for exports')
+                    if not outdir:
+                        return
+
+                    # Helper to fetch dataframes based on filters
+                    def _fetch_dataframes(filters):
+                        conn = database.connect_db()
+                        params = []
+
+                        # Risk Range dataset
+                        risk_sql = (
+                            """
+                            SELECT i.id, bu.name AS business_unit, a.name AS division, i.name AS integration_name,
+                                   i.vendor, i.score, i.criticality, i.risk_score AS risk, i.notes
+                            FROM system_integrations i
+                            JOIN applications a ON i.parent_app_id = a.id
+                            JOIN application_business_units abu ON a.id = abu.app_id
+                            JOIN business_units bu ON abu.unit_id = bu.id
+                            WHERE 1=1
+                            """
+                        )
+                        if filters.get('bu'):
+                            risk_sql += " AND bu.name = ?"
+                            params.append(filters['bu'])
+                        if filters.get('division_contains'):
+                            risk_sql += " AND a.name LIKE ?"
+                            params.append(f"%{filters['division_contains']}%")
+                        risk_sql += " ORDER BY bu.name, a.name, i.name"
+                        risk_df = pd.read_sql_query(risk_sql, conn, params=params)
+
+                        # BU Risk dataset
+                        params = []
+                        bu_sql = (
+                            """
+                            SELECT bu.name AS business_unit,
+                                   COUNT(DISTINCT abu.app_id) AS app_count,
+                                   AVG(i.risk_score) AS avg_integration_risk
+                            FROM business_units bu
+                            LEFT JOIN application_business_units abu ON bu.id = abu.unit_id
+                            LEFT JOIN applications a ON abu.app_id = a.id
+                            LEFT JOIN system_integrations i ON a.id = i.parent_app_id
+                            WHERE 1=1
+                            """
+                        )
+                        if filters.get('bu'):
+                            bu_sql += " AND bu.name = ?"
+                            params.append(filters['bu'])
+                        if filters.get('division_contains'):
+                            bu_sql += " AND a.name LIKE ?"
+                            params.append(f"%{filters['division_contains']}%")
+                        bu_sql += " GROUP BY bu.id ORDER BY bu.name"
+                        bu_df = pd.read_sql_query(bu_sql, conn, params=params)
+
+                        # Criticality dataset
+                        params = []
+                        crit_sql = (
+                            """
+                            SELECT a.name AS division, a.criticality, a.risk_score AS risk
+                            FROM applications a
+                            LEFT JOIN application_business_units abu ON a.id = abu.app_id
+                            LEFT JOIN business_units bu ON abu.unit_id = bu.id
+                            WHERE 1=1
+                            """
+                        )
+                        if filters.get('bu'):
+                            crit_sql += " AND bu.name = ?"
+                            params.append(filters['bu'])
+                        if filters.get('division_contains'):
+                            crit_sql += " AND a.name LIKE ?"
+                            params.append(f"%{filters['division_contains']}%")
+                        crit_sql += " ORDER BY a.name"
+                        crit_df = pd.read_sql_query(crit_sql, conn, params=params)
+
+                        conn.close()
+                        return risk_df, bu_df, crit_df
+
+                    # CSV export
+                    def export_csv(selected, filters):
+                        try:
+                            risk_df, bu_df, crit_df = _fetch_dataframes(filters)
+                            saved_files = []
+                            if selected.get('risk'):
+                                path = os.path.join(outdir, 'risk_range.csv')
+                                risk_df.to_csv(path, index=False)
+                                saved_files.append(path)
+                            if selected.get('bu'):
+                                path = os.path.join(outdir, 'bu_risk.csv')
+                                bu_df.to_csv(path, index=False)
+                                saved_files.append(path)
+                            if selected.get('crit'):
+                                path = os.path.join(outdir, 'criticality.csv')
+                                crit_df.to_csv(path, index=False)
+                                saved_files.append(path)
+                            if saved_files:
+                                messagebox.showinfo('Export Complete', 'Saved files:\n' + "\n".join(saved_files))
+                            else:
+                                messagebox.showinfo('No Data Selected', 'Please select at least one dataset to export.')
+                        except Exception as e:
+                            messagebox.showerror('Export Error', f'Failed to export CSV: {e}')
+
+                    # XLSX export
+                    def export_xlsx(selected, filters):
+                        try:
+                            risk_df, bu_df, crit_df = _fetch_dataframes(filters)
+                            xlsx_path = os.path.join(outdir, 'reports_export.xlsx')
+                            with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
+                                if selected.get('risk'):
+                                    risk_df.to_excel(writer, sheet_name='Risk Range', index=False)
+                                if selected.get('bu'):
+                                    bu_df.to_excel(writer, sheet_name='BU Risk', index=False)
+                                if selected.get('crit'):
+                                    crit_df.to_excel(writer, sheet_name='Criticality', index=False)
+                            messagebox.showinfo('Export Complete', f'Excel saved to {xlsx_path}')
+                        except Exception as e:
+                            messagebox.showerror('Export Error', f'Failed to export XLSX: {e}')
+
+                    # PDF export (ReportLab first, fallback to Matplotlib PdfPages)
+                    def export_pdf(selected, filters):
+                        try:
+                            from datetime import datetime as _dt
+                            risk_df, bu_df, crit_df = _fetch_dataframes(filters)
+                            pdf_path = os.path.join(outdir, 'reports_export.pdf')
+                            # Try ReportLab first
+                            try:
+                                from reportlab.lib.pagesizes import letter
+                                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
+                                from reportlab.lib import colors
+                                from reportlab.lib.styles import getSampleStyleSheet
+
+                                doc = SimpleDocTemplate(pdf_path, pagesize=letter)
+                                styles = getSampleStyleSheet()
+                                elems = []
+                                elems.append(Paragraph('User-Defined Reports', styles['Title']))
+                                elems.append(Spacer(1, 12))
+
+                                if selected.get('bu') and not bu_df.empty:
+                                    elems.append(Paragraph('Business Unit Risk', styles['Heading2']))
+                                    data = [list(bu_df.columns)] + bu_df.values.tolist()
+                                    tbl = Table(data, repeatRows=1)
+                                    tbl.setStyle(TableStyle([
+                                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2b579a')),
+                                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                                        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                                        ('ALIGN', (0, 0), (-1, -1), 'CENTER')
+                                    ]))
+                                    elems.append(tbl)
+                                    elems.append(Spacer(1, 12))
+
+                                if selected.get('crit') and not crit_df.empty:
+                                    elems.append(Paragraph('Division Criticality', styles['Heading2']))
+                                    try:
+                                        fig, ax = plt.subplots(figsize=(8, 3))
+                                        bars = ax.bar(range(len(crit_df)), crit_df['criticality'])
+                                        ax.set_xticks(range(len(crit_df)))
+                                        ax.set_xticklabels(crit_df['division'].tolist(), rotation=45, ha='right')
+                                        ax.set_ylabel('Criticality')
+                                        ax.set_title('Division Criticality Comparison')
+                                        plt.tight_layout()
+                                        tmp_img = os.path.join(outdir, f'criticality_{_dt.now().strftime("%Y%m%d_%H%M%S")}.png')
+                                        fig.savefig(tmp_img, dpi=150)
+                                        plt.close(fig)
+                                        elems.append(Image(tmp_img, width=500, height=180))
+                                        elems.append(Spacer(1, 12))
+                                    except Exception:
+                                        pass
+
+                                if selected.get('risk') and not risk_df.empty:
+                                    elems.append(Paragraph('Risk Range (first 60 rows)', styles['Heading2']))
+                                    preview = risk_df.head(60)
+                                    data = [list(preview.columns)] + preview.values.tolist()
+                                    tbl = Table(data, repeatRows=1)
+                                    tbl.setStyle(TableStyle([
+                                        ('GRID', (0, 0), (-1, -1), 0.25, colors.grey),
+                                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold')
+                                    ]))
+                                    elems.append(tbl)
+                                    elems.append(Spacer(1, 8))
+
+                                doc.build(elems)
+                                messagebox.showinfo('Export Complete', f'PDF saved to {pdf_path}')
+                            except Exception as e_reportlab:
+                                # Fallback to Matplotlib PdfPages
+                                from matplotlib.backends.backend_pdf import PdfPages
+                                with PdfPages(pdf_path) as pdf:
+                                    if selected.get('bu') and not bu_df.empty:
+                                        fig1, ax1 = plt.subplots(figsize=(8.5, 11))
+                                        ax1.axis('off')
+                                        tbl = ax1.table(cellText=bu_df.values.tolist(), colLabels=list(bu_df.columns), loc='center')
+                                        tbl.auto_set_font_size(False); tbl.set_fontsize(8); tbl.scale(1, 1.2)
+                                        plt.tight_layout(); pdf.savefig(fig1); plt.close(fig1)
+                                    if selected.get('crit') and not crit_df.empty:
+                                        fig2, ax2 = plt.subplots(figsize=(11, 6))
+                                        bars = ax2.bar(range(len(crit_df)), crit_df['criticality'])
+                                        ax2.set_title('Division Criticality Comparison')
+                                        ax2.set_xlabel('Divisions'); ax2.set_ylabel('Criticality')
+                                        plt.xticks(range(len(crit_df)), crit_df['division'].tolist(), rotation=45, ha='right')
+                                        for bar, score in zip(bars, crit_df['criticality']):
+                                            if score >= 8: bar.set_color('#ff9999')
+                                            elif score >= 4: bar.set_color('#ffcc99')
+                                            else: bar.set_color('#99cc99')
+                                        for bar in bars:
+                                            h = bar.get_height(); ax2.text(bar.get_x()+bar.get_width()/2., h, f'{h:.1f}', ha='center', va='bottom')
+                                        plt.tight_layout(); pdf.savefig(fig2); plt.close(fig2)
+                                    if selected.get('risk') and not risk_df.empty:
+                                        fig3, ax3 = plt.subplots(figsize=(11, 8))
+                                        ax3.axis('off')
+                                        preview = risk_df.head(40)
+                                        tbl = ax3.table(cellText=preview.values.tolist(), colLabels=list(preview.columns), loc='center')
+                                        tbl.auto_set_font_size(False); tbl.set_fontsize(6); tbl.scale(1, 1.0)
+                                        plt.tight_layout(); pdf.savefig(fig3); plt.close(fig3)
+                                messagebox.showinfo('Export Complete', f'PDF saved to {pdf_path}')
+                        except Exception as e:
+                            messagebox.showerror('Export Error', f'Failed to export PDF: {e}')
+
+                    # Build user-defined export modal
+                    def _show_export_modal():
+                        modal = tk.Toplevel(self)
+                        modal.transient(self); modal.grab_set()
+                        modal.title('Export Reports')
+                        modal.geometry('460x320')
+
+                        # Destination folder with change option
+                        folder_frame = ttk.Frame(modal); folder_frame.pack(fill='x', padx=12, pady=(10, 4))
+                        ttk.Label(folder_frame, text='Destination:').pack(side='left')
+                        dest_var = tk.StringVar(value=outdir)
+                        dest_lbl = ttk.Label(folder_frame, textvariable=dest_var)
+                        dest_lbl.pack(side='left', padx=6)
+                        def _change_dest():
+                            newdir = filedialog.askdirectory(title='Select output folder for exports', initialdir=dest_var.get())
+                            if newdir:
+                                dest_var.set(newdir)
+                        ttk.Button(folder_frame, text='Change...', command=_change_dest).pack(side='right')
+
+                        # Dataset selection
+                        section1 = ttk.LabelFrame(modal, text='Datasets')
+                        section1.pack(fill='x', padx=12, pady=6)
+                        var_risk = tk.BooleanVar(value=True)
+                        var_bu = tk.BooleanVar(value=True)
+                        var_crit = tk.BooleanVar(value=True)
+                        ttk.Checkbutton(section1, text='Risk Range (Integrations)', variable=var_risk).pack(anchor='w', padx=8, pady=2)
+                        ttk.Checkbutton(section1, text='Business Unit Risk (Averages)', variable=var_bu).pack(anchor='w', padx=8, pady=2)
+                        ttk.Checkbutton(section1, text='Division Criticality', variable=var_crit).pack(anchor='w', padx=8, pady=2)
+
+                        # Filters
+                        section2 = ttk.LabelFrame(modal, text='Filters')
+                        section2.pack(fill='x', padx=12, pady=6)
+                        # Business Unit dropdown
+                        bu_values = ['All']
+                        try:
+                            # Reuse existing get_departments() which returns (id,name)
+                            bu_values += [name for (_, name) in self.get_departments()]
+                        except Exception:
+                            pass
+                        ttk.Label(section2, text='Business Unit:').grid(row=0, column=0, sticky='e', padx=8, pady=4)
+                        bu_sel = ttk.Combobox(section2, values=bu_values, state='readonly', width=28)
+                        bu_sel.set('All')
+                        bu_sel.grid(row=0, column=1, sticky='w', padx=8, pady=4)
+                        ttk.Label(section2, text='Division contains:').grid(row=1, column=0, sticky='e', padx=8, pady=4)
+                        div_var = tk.StringVar()
+                        ttk.Entry(section2, textvariable=div_var, width=30).grid(row=1, column=1, sticky='w', padx=8, pady=4)
+
+                        # Export format
+                        section3 = ttk.LabelFrame(modal, text='Format')
+                        section3.pack(fill='x', padx=12, pady=6)
+                        fmt_var = tk.StringVar(value='pdf')
+                        ttk.Radiobutton(section3, text='CSV', variable=fmt_var, value='csv').pack(side='left', padx=10, pady=4)
+                        ttk.Radiobutton(section3, text='Excel (.xlsx)', variable=fmt_var, value='xlsx').pack(side='left', padx=10, pady=4)
+                        ttk.Radiobutton(section3, text='PDF', variable=fmt_var, value='pdf').pack(side='left', padx=10, pady=4)
+
+                        # Action buttons
+                        btns = ttk.Frame(modal); btns.pack(pady=10)
+                        def _export_and_close():
+                            selected = {'risk': var_risk.get(), 'bu': var_bu.get(), 'crit': var_crit.get()}
+                            filters = {
+                                'bu': None if bu_sel.get() in (None, '', 'All') else bu_sel.get(),
+                                'division_contains': (div_var.get() or '').strip() or None
+                            }
+                            # Update outdir from dest_var
+                            nonlocal outdir
+                            outdir = dest_var.get()
+                            if fmt_var.get() == 'csv':
+                                export_csv(selected, filters)
+                            elif fmt_var.get() == 'xlsx':
+                                export_xlsx(selected, filters)
+                            else:
+                                export_pdf(selected, filters)
+                            modal.destroy()
+                        ttk.Button(btns, text='Export', command=_export_and_close, style='Primary.TButton', width=14).pack(side='left', padx=6)
+                        ttk.Button(btns, text='Cancel', command=modal.destroy, width=12).pack(side='left', padx=6)
+
+                    _show_export_modal()
+                except Exception as e:
+                    messagebox.showerror('Export Error', f'Export failed: {e}')
+
+        print_reports_btn = ttk.Button(left_btns_frame, text='Print Reports', command=on_print_reports, style='Primary.TButton', width=btn_width)
+        print_reports_btn.pack(side='top')
+
+        # Add button to generate smoke test data for reports (moved to Risk tab top-right)
         def on_generate_smoke():
             try:
                 database.generate_smoke_test_data()
@@ -748,9 +1273,6 @@ class AppTracker(tk.Tk):
                 self.refresh_table()
             except Exception as e:
                 messagebox.showerror('Error', f'Failed to generate smoke test data: {e}')
-
-        gen_smoke_btn = ttk.Button(reports_top_frame, text='Generate Smoke Test Data', command=on_generate_smoke, style='Accent.TButton')
-        gen_smoke_btn.pack(side='left', padx=10)
         
         # Add some placeholder content to the Reports tab
         reports_label = tk.Label(self.tab_reports, text="Reports Dashboard", 
@@ -861,6 +1383,13 @@ class AppTracker(tk.Tk):
         # Move 'Purge Database' button to the top right-hand side of the screen
         purge_button = ttk.Button(top_buttons_frame, text='Purge Database', command=self.purge_database_gui, style='Danger.TButton')
         purge_button.pack(side='right', padx=6)
+        # Add Generate Smoke Test Data button to the top-right of the Risk tab
+        try:
+            gen_smoke_btn = ttk.Button(top_buttons_frame, text='Generate Smoke Test Data', command=on_generate_smoke, style='Accent.TButton')
+            gen_smoke_btn.pack(side='right', padx=6)
+        except Exception:
+            # If the handler isn't available for some reason, skip silently
+            pass
         
         # Create Note and Save Note buttons in a separate frame below
         edit_frame = ttk.Frame(right_frame)
