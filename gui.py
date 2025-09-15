@@ -345,12 +345,20 @@ class AppTracker(tk.Tk):
         risk_frame = ttk.Frame(notebook)
         notebook.add(risk_frame, text='Risk Range Report')
         
-        # Add header
+        # Add header with title and legend
         risk_header = tk.Frame(risk_frame, bg=WIN_BG)
         risk_header.pack(fill='x', pady=(10, 15))
         risk_label = tk.Label(risk_header, text='Integrations by Risk Range', 
                           font=('Segoe UI', 14, 'bold'), fg=ACCENT, bg=WIN_BG)
         risk_label.pack(side='left', padx=15)
+        # Color legend on the right
+        risk_legend = tk.Frame(risk_header, bg=WIN_BG)
+        risk_legend.pack(side='right', padx=15)
+        def _legend_chip_rf(parent, text, bg):
+            tk.Label(parent, text=text, bg=bg, fg='black', padx=6, pady=2).pack(side='left', padx=3)
+        _legend_chip_rf(risk_legend, 'High (≥70)', '#ffcccc')
+        _legend_chip_rf(risk_legend, 'Med (50–69)', '#fff2cc')
+        _legend_chip_rf(risk_legend, 'Low (1–49)', '#ccffcc')
         
         # Controls frame for risk range selection
         controls_frame = ttk.Frame(risk_frame)
@@ -368,7 +376,6 @@ class AppTracker(tk.Tk):
         columns = ('Business Unit', 'Division', 'Integration Name', 'Vendor', 
                   'Score', 'Criticality', 'Risk', 'Notes')
         risk_tree = ttk.Treeview(risk_frame, columns=columns, show='headings')
-        
         # Configure columns with appropriate widths and anchors
         widths = {
             'Business Unit': 200, 'Division': 180, 'Integration Name': 200,
@@ -468,6 +475,9 @@ class AppTracker(tk.Tk):
             risk_tree.tag_configure('yellow', background='#fff2cc')
             risk_tree.tag_configure('green', background='#ccffcc')
         
+        # Add Refresh button now that update_risk_table is defined
+        ttk.Button(controls_frame, text='Refresh', command=update_risk_table, style='Primary.TButton').pack(side='left', padx=5)
+        
         # Bind the update function to combobox selection
         risk_var.trace('w', update_risk_table)
         
@@ -478,12 +488,19 @@ class AppTracker(tk.Tk):
         bu_frame = ttk.Frame(notebook)
         notebook.add(bu_frame, text='Business Unit Risk')
         
-        # Add a modern header to the business unit report
+        # Add a modern header to the business unit report with legend
         bu_header = tk.Frame(bu_frame, bg=WIN_BG)
         bu_header.pack(fill='x', pady=(10, 15))
         bu_label = tk.Label(bu_header, text='Business Unit Risk Overview', 
                           font=('Segoe UI', 14, 'bold'), fg=ACCENT, bg=WIN_BG)
         bu_label.pack(side='left', padx=15)
+        bu_legend = tk.Frame(bu_header, bg=WIN_BG)
+        bu_legend.pack(side='right', padx=15)
+        def _legend_chip_bu(parent, text, bg):
+            tk.Label(parent, text=text, bg=bg, fg='black', padx=6, pady=2).pack(side='left', padx=3)
+        _legend_chip_bu(bu_legend, 'High (≥70)', '#ffcccc')
+        _legend_chip_bu(bu_legend, 'Med (50–69)', '#fff2cc')
+        _legend_chip_bu(bu_legend, 'Low (1–49)', '#ccffcc')
         
         # Business Unit Risk Tree
         bu_tree = ttk.Treeview(bu_frame, columns=('Business Unit', 'App Count', 'Avg Risk', 'Status'), show='headings')
@@ -522,42 +539,53 @@ class AppTracker(tk.Tk):
         chart_frame = ttk.Frame(crit_frame)
         chart_frame.pack(fill='both', expand=True, padx=15, pady=5)
         
-        # Populate business unit data
-        conn = database.connect_db()
-        c = conn.cursor()
-        # Aggregate by business unit using average integration risk (system_integrations.risk_score)
-        c.execute('''SELECT bu.name, COUNT(DISTINCT abu.app_id) as app_count, AVG(i.risk_score) as avg_integration_risk
-                 FROM business_units bu
-                 LEFT JOIN application_business_units abu ON bu.id = abu.unit_id
-                 LEFT JOIN applications a ON abu.app_id = a.id
-                 LEFT JOIN system_integrations i ON a.id = i.parent_app_id
-                 GROUP BY bu.id''')
-        results = c.fetchall()
-        for bu_name, count, avg_risk in results:
-            if avg_risk is None or avg_risk < 1:
-                status = 'No Data'
-                bu_tree.insert('', 'end', values=(bu_name, count, '0', status))
-            else:
-                try:
-                    avg = float(avg_risk)
-                except Exception:
-                    avg = 0.0
-                tag = get_risk_color(avg)
-                if tag == 'red':
-                    status = 'High'
-                elif tag == 'yellow':
-                    status = 'Med'
+        # Populate business unit data via a refreshable function
+        def update_bu_table():
+            # Clear table
+            bu_tree.delete(*bu_tree.get_children())
+            conn = database.connect_db()
+            c = conn.cursor()
+            # Aggregate by business unit using average integration risk (system_integrations.risk_score)
+            c.execute('''SELECT bu.name, COUNT(DISTINCT abu.app_id) as app_count, AVG(i.risk_score) as avg_integration_risk
+                     FROM business_units bu
+                     LEFT JOIN application_business_units abu ON bu.id = abu.unit_id
+                     LEFT JOIN applications a ON abu.app_id = a.id
+                     LEFT JOIN system_integrations i ON a.id = i.parent_app_id
+                     GROUP BY bu.id''')
+            results = c.fetchall()
+            for bu_name, count, avg_risk in results:
+                if avg_risk is None or avg_risk < 1:
+                    status = 'No Data'
+                    bu_tree.insert('', 'end', values=(bu_name, count, '0', status))
                 else:
-                    status = 'Low'
-                if tag:
-                    bu_tree.insert('', 'end', values=(bu_name, count, f'{avg:.1f}', status), tags=(tag,))
-                else:
-                    bu_tree.insert('', 'end', values=(bu_name, count, f'{avg:.1f}', status))
+                    try:
+                        avg = float(avg_risk)
+                    except Exception:
+                        avg = 0.0
+                    tag = get_risk_color(avg)
+                    if tag == 'red':
+                        status = 'High'
+                    elif tag == 'yellow':
+                        status = 'Med'
+                    else:
+                        status = 'Low'
+                    if tag:
+                        bu_tree.insert('', 'end', values=(bu_name, count, f'{avg:.1f}', status), tags=(tag,))
+                    else:
+                        bu_tree.insert('', 'end', values=(bu_name, count, f'{avg:.1f}', status))
+            # Configure row colors based on risk (do this once per refresh)
+            bu_tree.tag_configure('red', background='#ffcccc')
+            bu_tree.tag_configure('yellow', background='#fff2cc')
+            bu_tree.tag_configure('green', background='#ccffcc')
+            conn.close()
 
-        # Configure row colors based on risk (do this once, outside the loop)
-        bu_tree.tag_configure('red', background='#ffcccc')
-        bu_tree.tag_configure('yellow', background='#fff2cc')
-        bu_tree.tag_configure('green', background='#ccffcc')
+        # Controls row for BU with Refresh button
+        bu_controls = ttk.Frame(bu_frame)
+        bu_controls.pack(fill='x', padx=15, pady=(0, 5))
+        ttk.Button(bu_controls, text='Refresh', command=update_bu_table, style='Primary.TButton').pack(side='left')
+
+        # Initial population
+        update_bu_table()
 
         # Add styling to the report tree
         tree_style = ttk.Style()
@@ -573,7 +601,7 @@ class AppTracker(tk.Tk):
         # Create initial criticality chart
         self.update_criticality_chart(chart_frame, sort_var.get())
 
-        conn.close()
+    # Remove stray close; connections are managed within update functions
 
     def manage_departments_popup(self):
         popup = tk.Toplevel(self)
