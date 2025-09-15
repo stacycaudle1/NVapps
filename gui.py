@@ -363,7 +363,7 @@ class AppTracker(tk.Tk):
         # Controls frame for risk range selection
         controls_frame = ttk.Frame(risk_frame)
         controls_frame.pack(fill='x', padx=15, pady=5)
-        
+
         # Risk range selector
         ttk.Label(controls_frame, text="Risk Range:").pack(side='left', padx=5)
         risk_var = tk.StringVar(value="All")
@@ -371,7 +371,7 @@ class AppTracker(tk.Tk):
                                    values=["All", "Low (1-49)", "Med (50-69)", "High (70+)"],
                                    width=15, state='readonly')
         risk_options.pack(side='left', padx=5)
-        
+
         # Create the risk-filtered table
         columns = ('Business Unit', 'Division', 'Integration Name', 'Vendor', 
                   'Score', 'Criticality', 'Risk', 'Notes')
@@ -388,28 +388,32 @@ class AppTracker(tk.Tk):
             # Use left alignment for text columns, center for numeric
             anchor = 'w' if col in ('Business Unit', 'Division', 'Integration Name', 'Vendor', 'Notes') else 'center'
             risk_tree.column(col, width=w, anchor=anchor, stretch=True if col == 'Notes' else False)
-        
+
         # Create a container for the table and scrollbars
         table_container = ttk.Frame(risk_frame)
         table_container.pack(fill='both', expand=True, padx=15, pady=5)
-        
+
         # Add scrollbars
         vsb = ttk.Scrollbar(table_container, orient='vertical', command=risk_tree.yview)
         hsb = ttk.Scrollbar(table_container, orient='horizontal', command=risk_tree.xview)
         risk_tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
-        
+
         # Pack layout for table and scrollbars
         risk_tree.pack(side='left', fill='both', expand=True)
         vsb.pack(side='right', fill='y')
         hsb.pack(side='bottom', fill='x')
-        
+
+        # Small label to show last refresh time for Risk Range
+        risk_last_lbl = ttk.Label(controls_frame, text='Last refresh: N/A')
+        risk_last_lbl.pack(side='left', padx=(10,0))
+
         def update_risk_table(*args):
             risk_tree.delete(*risk_tree.get_children())
-            
+
             conn = database.connect_db()
             conn.row_factory = database.sqlite3.Row
             c = conn.cursor()
-            
+
             # Build the risk range condition based on integration risk scores
             risk_selection = risk_var.get()
             if risk_selection == "Low (1-49)":
@@ -421,7 +425,7 @@ class AppTracker(tk.Tk):
             else:
                 risk_condition = ""
             print(f"Selected risk range: {risk_selection}, condition: {risk_condition}")
-            
+
             # Debug: print the query being executed
             query = f'''
                 SELECT DISTINCT
@@ -467,20 +471,25 @@ class AppTracker(tk.Tk):
                     risk_tree.insert('', 'end', values=values, tags=(tag,))
                 else:
                     risk_tree.insert('', 'end', values=values)
-            
+
             conn.close()
-            
+
             # Configure row colors based on risk
             risk_tree.tag_configure('red', background='#ffcccc')
             risk_tree.tag_configure('yellow', background='#fff2cc')
             risk_tree.tag_configure('green', background='#ccffcc')
-        
+            # Update last refresh label
+            try:
+                risk_last_lbl.config(text=f"Last refresh: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            except Exception:
+                pass
+
         # Add Refresh button now that update_risk_table is defined
         ttk.Button(controls_frame, text='Refresh', command=update_risk_table, style='Primary.TButton').pack(side='left', padx=5)
-        
+
         # Bind the update function to combobox selection
         risk_var.trace('w', update_risk_table)
-        
+
         # Initial population of the risk table
         update_risk_table()
         
@@ -529,11 +538,22 @@ class AppTracker(tk.Tk):
         sort_options = ttk.Combobox(controls_frame, textvariable=sort_var, values=["Criticality", "Risk Score", "System Name"])
         sort_options.pack(side='left', padx=5)
         
-        # Button to refresh visualization
+        # Button to refresh visualization (wrapped to also update last-refresh label)
+        def _refresh_crit():
+            try:
+                self.update_criticality_chart(chart_frame, sort_var.get())
+            finally:
+                try:
+                    crit_last_lbl.config(text=f"Last refresh: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                except Exception:
+                    pass
+
         refresh_btn = ttk.Button(controls_frame, text="Refresh", 
-                               command=lambda: self.update_criticality_chart(chart_frame, sort_var.get()),
+                               command=_refresh_crit,
                                style='Primary.TButton')
         refresh_btn.pack(side='left', padx=5)
+        crit_last_lbl = ttk.Label(controls_frame, text='Last refresh: N/A')
+        crit_last_lbl.pack(side='left', padx=(8,0))
         
         # Frame for matplotlib chart
         chart_frame = ttk.Frame(crit_frame)
@@ -578,11 +598,22 @@ class AppTracker(tk.Tk):
             bu_tree.tag_configure('yellow', background='#fff2cc')
             bu_tree.tag_configure('green', background='#ccffcc')
             conn.close()
+            # Configure row colors based on risk
+            bu_tree.tag_configure('red', background='#ffcccc')
+            bu_tree.tag_configure('yellow', background='#fff2cc')
+            bu_tree.tag_configure('green', background='#ccffcc')
+            # Update BU last-refresh label if available
+            try:
+                bu_last_lbl.config(text=f"Last refresh: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+            except Exception:
+                pass
 
         # Controls row for BU with Refresh button
         bu_controls = ttk.Frame(bu_frame)
         bu_controls.pack(fill='x', padx=15, pady=(0, 5))
         ttk.Button(bu_controls, text='Refresh', command=update_bu_table, style='Primary.TButton').pack(side='left')
+        bu_last_lbl = ttk.Label(bu_controls, text='Last refresh: N/A')
+        bu_last_lbl.pack(side='left', padx=(8,0))
 
         # Initial population
         update_bu_table()
