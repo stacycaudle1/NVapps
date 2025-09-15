@@ -1,3 +1,80 @@
+def generate_smoke_test_data():
+    """
+    Populate the database with sample data for reports and UI validation.
+    Creates business units, applications, departments, and system integrations with realistic values.
+    """
+    import random
+    from datetime import datetime, timezone
+    import time
+    max_attempts = 5
+    for attempt in range(max_attempts):
+        try:
+            # Create business units
+            conn = connect_db()
+            c = conn.cursor()
+            bu_names = ["Finance", "HR", "IT", "Operations", "Sales"]
+            c.executemany("INSERT OR IGNORE INTO business_units (name) VALUES (?)", [(n,) for n in bu_names])
+            conn.commit()
+            conn.close()
+
+            # Create departments
+            conn = connect_db()
+            c = conn.cursor()
+            dept_names = ["Accounting", "Recruiting", "Support", "Logistics", "Marketing"]
+            c.executemany("INSERT OR IGNORE INTO departments (name) VALUES (?)", [(n,) for n in dept_names])
+            conn.commit()
+            conn.close()
+
+            # Create applications
+            app_names = ["ERP System", "Payroll", "CRM", "Inventory", "Helpdesk"]
+            for i, app in enumerate(app_names):
+                vendor = random.choice(["Oracle", "SAP", "Microsoft", "Custom", "OpenSource"])
+                factors = {k: random.randint(1, 10) for k in ['score', 'need', 'criticality', 'installed', 'disaster_recovery', 'safety', 'security', 'monetary', 'customer_service']}
+                notes = f"Sample notes for {app}"
+                dept_ids = [random.randint(1, len(dept_names))]
+                add_application(app, vendor, factors, dept_ids, notes)
+
+            # Link applications to business units
+            conn = connect_db()
+            c = conn.cursor()
+            c.execute("SELECT id FROM applications")
+            app_ids = [r[0] for r in c.fetchall()]
+            c.execute("SELECT id FROM business_units")
+            bu_ids = [r[0] for r in c.fetchall()]
+            for app_id in app_ids:
+                bu_id = random.choice(bu_ids)
+                c.execute("INSERT OR IGNORE INTO application_business_units (app_id, unit_id) VALUES (?, ?)", (app_id, bu_id))
+            conn.commit()
+            conn.close()
+
+            # Create system integrations for each app
+            for app_id in app_ids:
+                for j in range(random.randint(2, 4)):
+                    fields = {
+                        'name': f"Integration {j+1} for App {app_id}",
+                        'vendor': random.choice(["AWS", "Azure", "Google", "Internal"]),
+                        'score': random.randint(1, 10),
+                        'need': random.randint(1, 10),
+                        'criticality': random.randint(1, 10),
+                        'installed': random.randint(1, 10),
+                        'disaster_recovery': random.randint(1, 10),
+                        'safety': random.randint(1, 10),
+                        'security': random.randint(1, 10),
+                        'monetary': random.randint(1, 10),
+                        'customer_service': random.randint(1, 10),
+                        'notes': f"Integration notes {j+1}",
+                        'risk_score': random.uniform(10, 100),
+                        'last_modified': datetime.now(timezone.utc).isoformat()
+                    }
+                    add_system_integration(app_id, fields)
+            return
+        except sqlite3.OperationalError as e:
+            if 'database is locked' in str(e):
+                time.sleep(0.5)
+                continue
+            else:
+                raise
+    raise RuntimeError('Failed to generate smoke test data: database is locked after multiple attempts')
 import sqlite3
 from datetime import datetime
 from dataclasses import dataclass, field

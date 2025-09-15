@@ -665,6 +665,18 @@ class AppTracker(tk.Tk):
         # Add Show Report button to the top left of the Reports tab
         show_report_btn = ttk.Button(reports_top_frame, text='Show Report', command=self.show_report, style='Primary.TButton')
         show_report_btn.pack(side='left', padx=0)
+
+        # Add button to generate smoke test data for reports
+        def on_generate_smoke():
+            try:
+                database.generate_smoke_test_data()
+                messagebox.showinfo('Smoke Test Data', 'Sample data generated for reports.')
+                self.refresh_table()
+            except Exception as e:
+                messagebox.showerror('Error', f'Failed to generate smoke test data: {e}')
+
+        gen_smoke_btn = ttk.Button(reports_top_frame, text='Generate Smoke Test Data', command=on_generate_smoke, style='Accent.TButton')
+        gen_smoke_btn.pack(side='left', padx=10)
         
         # Add some placeholder content to the Reports tab
         reports_label = tk.Label(self.tab_reports, text="Reports Dashboard", 
