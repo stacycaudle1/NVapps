@@ -1,4 +1,25 @@
 import sqlite3
+from typing import Dict
+
+__all__ = [
+    'DB_NAME',
+    'connect_db',
+    'initialize_database',
+    'purge_database',
+    'add_application',
+    'add_system_integration',
+    'get_system_integration',
+    'get_system_integrations',
+    'update_system_integration',
+    'delete_system_integration',
+    'calculate_business_risk',
+    'dr_priority_band',
+    'link_app_to_departments',
+    'get_app_departments',
+    'get_application',
+    'update_application',
+    'generate_smoke_test_data',
+]
 
 def get_system_integrations(parent_app_id=None):
     """Get system integrations, optionally filtered by parent application ID."""
@@ -300,6 +321,70 @@ def delete_system_integration(integration_id):
         c.execute("DELETE FROM system_integrations WHERE id = ?", (integration_id,))
         conn.commit()
         return c.rowcount > 0
+    finally:
+        conn.close()
+
+def generate_smoke_test_data():
+    """Populate database with a small set of demo apps, business units, and integrations."""
+    initialize_database()
+    import random
+    from datetime import datetime, timezone
+
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        # Seed business units
+        bu_names = ["Finance", "HR", "IT"]
+        for n in bu_names:
+            c.execute("INSERT OR IGNORE INTO business_units (name) VALUES (?)", (n,))
+
+        # Create demo applications
+        app_defs = [
+            ("TestApp1", "VendorA", "IT"),
+            ("TestApp2", "VendorB", "HR"),
+            ("TestApp3", "VendorC", "Finance"),
+        ]
+
+        app_ids = []
+        for name, vendor, bu in app_defs:
+            factors: Dict[str, int] = {
+                'score': random.randint(1, 10),
+                'need': random.randint(1, 10),
+                'criticality': random.randint(1, 10),
+                'installed': random.randint(1, 10),
+                'disaster_recovery': random.randint(1, 10),
+                'safety': random.randint(1, 10),
+                'security': random.randint(1, 10),
+                'monetary': random.randint(1, 10),
+                'customer_service': random.randint(1, 10),
+            }
+            # Find BU id
+            c.execute("SELECT id FROM business_units WHERE name = ?", (bu,))
+            row = c.fetchone()
+            bu_id = row[0] if row else None
+            app_id = add_application(name, vendor, factors, [bu_id] if bu_id else [], notes=f"Notes for {name}")
+            app_ids.append(app_id)
+
+        # Create a couple of integrations per app
+        for app_id in app_ids:
+            for j in range(2):
+                fields = {
+                    'name': f"Int{j+1} for App {app_id}",
+                    'vendor': random.choice(["AWS", "Azure", "GCP", "Internal"]),
+                    'score': random.randint(1, 10),
+                    'need': random.randint(1, 10),
+                    'criticality': random.randint(1, 10),
+                    'installed': random.randint(1, 10),
+                    'disaster_recovery': random.randint(1, 10),
+                    'safety': random.randint(1, 10),
+                    'security': random.randint(1, 10),
+                    'monetary': random.randint(1, 10),
+                    'customer_service': random.randint(1, 10),
+                    'notes': f"Auto generated integration {j+1}",
+                    'risk_score': random.uniform(1.0, 100.0),
+                }
+                add_system_integration(app_id, fields)
+        conn.commit()
     finally:
         conn.close()
 
