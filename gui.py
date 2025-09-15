@@ -694,6 +694,115 @@ class AppTracker(tk.Tk):
             pack_opts={'fill': 'both', 'expand': True, 'padx': 15, 'pady': 5}
         )
         
+        # Division Risk Tab (inserted between Business Unit Risk and System Criticality)
+        div_frame = ttk.Frame(notebook)
+        notebook.add(div_frame, text='Division Risk')
+        
+        # Header with legend for Division Risk
+        div_header = tk.Frame(div_frame, bg=WIN_BG)
+        div_header.pack(fill='x', pady=(10, 15))
+        div_label = tk.Label(div_header, text='Division Risk Overview', 
+                          font=('Segoe UI', 14, 'bold'), fg=ACCENT, bg=WIN_BG)
+        div_label.pack(side='left', padx=15)
+        div_legend = tk.Frame(div_header, bg=WIN_BG)
+        div_legend.pack(side='right', padx=15)
+        def _legend_chip_div(parent, text, bg):
+            tk.Label(parent, text=text, bg=bg, fg='black', padx=6, pady=2).pack(side='left', padx=3)
+        _legend_chip_div(div_legend, 'High (≥70)', '#ffcccc')
+        _legend_chip_div(div_legend, 'Med (50–69)', '#fff2cc')
+        _legend_chip_div(div_legend, 'Low (1–49)', '#ccffcc')
+        
+        # Division Risk Tree using shared helper (same structure as BU Risk)
+        div_columns = ('Division', 'App Count', 'Avg Risk', 'Status')
+        div_widths = {'Division': 320, 'App Count': 110, 'Avg Risk': 110, 'Status': 120}
+        div_formatters = {
+            'App Count': lambda v: '' if v in (None, '') else f"{int(v)}",
+            'Avg Risk': lambda v: '' if v in (None, '') else f"{float(v):.1f}",
+        }
+        _, div_tree, div_api = self.create_table_with_scrollbars(
+            div_frame,
+            div_columns,
+            widths=div_widths,
+            formatters=div_formatters,
+            sort_handler=self.report_sort_table,
+            pack_opts={'fill': 'both', 'expand': True, 'padx': 15, 'pady': 5}
+        )
+        
+        # Populate division data via a refreshable function (group by application name)
+        def update_div_table():
+            # Clear table
+            div_tree.delete(*div_tree.get_children())
+            conn = database.connect_db()
+            c = conn.cursor()
+            # Aggregate by division (application name) using average integration risk
+            c.execute('''SELECT a.name as division, COUNT(a.id) as app_count, AVG(i.risk_score) as avg_integration_risk
+                     FROM applications a
+                     LEFT JOIN system_integrations i ON a.id = i.parent_app_id
+                     GROUP BY a.name''')
+            results = c.fetchall()
+            for division, count, avg_risk in results:
+                if avg_risk is None or avg_risk < 1:
+                    status = 'No Data'
+                    raw_values = (division, count, 0.0, status)
+                    div_tree.insert('', 'end', values=div_api['format'](raw_values))
+                else:
+                    try:
+                        avg = float(avg_risk)
+                    except Exception:
+                        avg = 0.0
+                    tag = get_risk_color(avg)
+                    if tag == 'red':
+                        status = 'High'
+                    elif tag == 'yellow':
+                        status = 'Med'
+                    else:
+                        status = 'Low'
+                    raw_values = (division, count, avg, status)
+                    formatted = div_api['format'](raw_values)
+                    if tag:
+                        div_tree.insert('', 'end', values=formatted, tags=(tag,))
+                    else:
+                        div_tree.insert('', 'end', values=formatted)
+            # Configure row colors based on risk (do this once per refresh)
+            div_tree.tag_configure('red', background='#ffcccc')
+            div_tree.tag_configure('yellow', background='#fff2cc')
+            div_tree.tag_configure('green', background='#ccffcc')
+            conn.close()
+            # Zebra striping
+            try:
+                div_api['apply_zebra']()
+            except Exception:
+                pass
+            # Update Division last-refresh timestamp in in-memory state and update label
+            try:
+                state = self._report_refresh_state.get('div')
+                if state is None:
+                    self._report_refresh_state['div'] = {'label': None, 'ts': datetime.now()}
+                else:
+                    state['ts'] = datetime.now()
+                _update_report_label('div')
+            except Exception:
+                pass
+        
+        # Controls row for Division with Refresh button
+        div_controls = ttk.Frame(div_frame)
+        div_controls.pack(fill='x', padx=15, pady=(0, 5))
+        ttk.Button(div_controls, text='Refresh', command=update_div_table, style='Primary.TButton').pack(side='left')
+        div_last_lbl = ttk.Label(div_controls, text='Last refresh: N/A')
+        div_last_lbl.pack(side='left', padx=(8,0))
+        # Register DIV label widget for elapsed updates
+        try:
+            st = self._report_refresh_state.get('div')
+            if st is None:
+                self._report_refresh_state['div'] = {'label': div_last_lbl, 'ts': None}
+            else:
+                st['label'] = div_last_lbl
+        except Exception:
+            pass
+
+        # Initial population
+        update_div_table()
+        
         # System Criticality Tab
         crit_frame = ttk.Frame(notebook)
         notebook.add(crit_frame, text='System Criticality')
@@ -957,313 +1066,6 @@ class AppTracker(tk.Tk):
         btn_width = 18
         show_report_btn = ttk.Button(left_btns_frame, text='Show Report', command=self.show_report, style='Primary.TButton', width=btn_width)
         show_report_btn.pack(side='top', padx=0, pady=(0,6))
-
-        def on_print_reports():
-            # Open reports view first as convenience, then offer user-defined export options
-            try:
-                self.show_report()
-            finally:
-                try:
-                    from tkinter import filedialog
-                    import os
-                    # Ask for output folder first
-                    outdir = filedialog.askdirectory(title='Select output folder for exports')
-                    if not outdir:
-                        return
-
-                    # Helper to fetch dataframes based on filters
-                    def _fetch_dataframes(filters):
-                        conn = database.connect_db()
-                        params = []
-
-                        # Risk Range dataset
-                        risk_sql = (
-                            """
-                            SELECT i.id, bu.name AS business_unit, a.name AS division, i.name AS integration_name,
-                                   i.vendor, i.score, i.criticality, i.risk_score AS risk, i.notes
-                            FROM system_integrations i
-                            JOIN applications a ON i.parent_app_id = a.id
-                            JOIN application_business_units abu ON a.id = abu.app_id
-                            JOIN business_units bu ON abu.unit_id = bu.id
-                            WHERE 1=1
-                            """
-                        )
-                        if filters.get('bu'):
-                            risk_sql += " AND bu.name = ?"
-                            params.append(filters['bu'])
-                        if filters.get('division_contains'):
-                            risk_sql += " AND a.name LIKE ?"
-                            params.append(f"%{filters['division_contains']}%")
-                        risk_sql += " ORDER BY bu.name, a.name, i.name"
-                        risk_df = pd.read_sql_query(risk_sql, conn, params=params)
-
-                        # BU Risk dataset
-                        params = []
-                        bu_sql = (
-                            """
-                            SELECT bu.name AS business_unit,
-                                   COUNT(DISTINCT abu.app_id) AS app_count,
-                                   AVG(i.risk_score) AS avg_integration_risk
-                            FROM business_units bu
-                            LEFT JOIN application_business_units abu ON bu.id = abu.unit_id
-                            LEFT JOIN applications a ON abu.app_id = a.id
-                            LEFT JOIN system_integrations i ON a.id = i.parent_app_id
-                            WHERE 1=1
-                            """
-                        )
-                        if filters.get('bu'):
-                            bu_sql += " AND bu.name = ?"
-                            params.append(filters['bu'])
-                        if filters.get('division_contains'):
-                            bu_sql += " AND a.name LIKE ?"
-                            params.append(f"%{filters['division_contains']}%")
-                        bu_sql += " GROUP BY bu.id ORDER BY bu.name"
-                        bu_df = pd.read_sql_query(bu_sql, conn, params=params)
-
-                        # Criticality dataset
-                        params = []
-                        crit_sql = (
-                            """
-                            SELECT a.name AS division, a.criticality, a.risk_score AS risk
-                            FROM applications a
-                            LEFT JOIN application_business_units abu ON a.id = abu.app_id
-                            LEFT JOIN business_units bu ON abu.unit_id = bu.id
-                            WHERE 1=1
-                            """
-                        )
-                        if filters.get('bu'):
-                            crit_sql += " AND bu.name = ?"
-                            params.append(filters['bu'])
-                        if filters.get('division_contains'):
-                            crit_sql += " AND a.name LIKE ?"
-                            params.append(f"%{filters['division_contains']}%")
-                        crit_sql += " ORDER BY a.name"
-                        crit_df = pd.read_sql_query(crit_sql, conn, params=params)
-
-                        conn.close()
-                        return risk_df, bu_df, crit_df
-
-                    # CSV export
-                    def export_csv(selected, filters):
-                        try:
-                            risk_df, bu_df, crit_df = _fetch_dataframes(filters)
-                            saved_files = []
-                            if selected.get('risk'):
-                                path = os.path.join(outdir, 'risk_range.csv')
-                                risk_df.to_csv(path, index=False)
-                                saved_files.append(path)
-                            if selected.get('bu'):
-                                path = os.path.join(outdir, 'bu_risk.csv')
-                                bu_df.to_csv(path, index=False)
-                                saved_files.append(path)
-                            if selected.get('crit'):
-                                path = os.path.join(outdir, 'criticality.csv')
-                                crit_df.to_csv(path, index=False)
-                                saved_files.append(path)
-                            if saved_files:
-                                messagebox.showinfo('Export Complete', 'Saved files:\n' + "\n".join(saved_files))
-                            else:
-                                messagebox.showinfo('No Data Selected', 'Please select at least one dataset to export.')
-                        except Exception as e:
-                            messagebox.showerror('Export Error', f'Failed to export CSV: {e}')
-
-                    # XLSX export
-                    def export_xlsx(selected, filters):
-                        try:
-                            risk_df, bu_df, crit_df = _fetch_dataframes(filters)
-                            xlsx_path = os.path.join(outdir, 'reports_export.xlsx')
-                            with pd.ExcelWriter(xlsx_path, engine='openpyxl') as writer:
-                                if selected.get('risk'):
-                                    risk_df.to_excel(writer, sheet_name='Risk Range', index=False)
-                                if selected.get('bu'):
-                                    bu_df.to_excel(writer, sheet_name='BU Risk', index=False)
-                                if selected.get('crit'):
-                                    crit_df.to_excel(writer, sheet_name='Criticality', index=False)
-                            messagebox.showinfo('Export Complete', f'Excel saved to {xlsx_path}')
-                        except Exception as e:
-                            messagebox.showerror('Export Error', f'Failed to export XLSX: {e}')
-
-                    # PDF export (ReportLab first, fallback to Matplotlib PdfPages)
-                    def export_pdf(selected, filters):
-                        try:
-                            from datetime import datetime as _dt
-                            risk_df, bu_df, crit_df = _fetch_dataframes(filters)
-                            pdf_path = os.path.join(outdir, 'reports_export.pdf')
-                            # Try ReportLab first
-                            try:
-                                from reportlab.lib.pagesizes import letter
-                                from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image
-                                from reportlab.lib import colors
-                                from reportlab.lib.styles import getSampleStyleSheet
-
-                                doc = SimpleDocTemplate(pdf_path, pagesize=letter)
-                                styles = getSampleStyleSheet()
-                                elems = []
-                                elems.append(Paragraph('User-Defined Reports', styles['Title']))
-                                elems.append(Spacer(1, 12))
-
-                                if selected.get('bu') and not bu_df.empty:
-                                    elems.append(Paragraph('Business Unit Risk', styles['Heading2']))
-                                    data = [list(bu_df.columns)] + bu_df.values.tolist()
-                                    tbl = Table(data, repeatRows=1)
-                                    tbl.setStyle(TableStyle([
-                                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2b579a')),
-                                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-                                        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
-                                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
-                                        ('ALIGN', (0, 0), (-1, -1), 'CENTER')
-                                    ]))
-                                    elems.append(tbl)
-                                    elems.append(Spacer(1, 12))
-
-                                if selected.get('crit') and not crit_df.empty:
-                                    elems.append(Paragraph('Division Criticality', styles['Heading2']))
-                                    try:
-                                        fig, ax = plt.subplots(figsize=(8, 3))
-                                        bars = ax.bar(range(len(crit_df)), crit_df['criticality'])
-                                        ax.set_xticks(range(len(crit_df)))
-                                        ax.set_xticklabels(crit_df['division'].tolist(), rotation=45, ha='right')
-                                        ax.set_ylabel('Criticality')
-                                        ax.set_title('Division Criticality Comparison')
-                                        plt.tight_layout()
-                                        tmp_img = os.path.join(outdir, f'criticality_{_dt.now().strftime("%Y%m%d_%H%M%S")}.png')
-                                        fig.savefig(tmp_img, dpi=150)
-                                        plt.close(fig)
-                                        elems.append(Image(tmp_img, width=500, height=180))
-                                        elems.append(Spacer(1, 12))
-                                    except Exception:
-                                        pass
-
-                                if selected.get('risk') and not risk_df.empty:
-                                    elems.append(Paragraph('Risk Range (first 60 rows)', styles['Heading2']))
-                                    preview = risk_df.head(60)
-                                    data = [list(preview.columns)] + preview.values.tolist()
-                                    tbl = Table(data, repeatRows=1)
-                                    tbl.setStyle(TableStyle([
-                                        ('GRID', (0, 0), (-1, -1), 0.25, colors.grey),
-                                        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold')
-                                    ]))
-                                    elems.append(tbl)
-                                    elems.append(Spacer(1, 8))
-
-                                doc.build(elems)
-                                messagebox.showinfo('Export Complete', f'PDF saved to {pdf_path}')
-                            except Exception as e_reportlab:
-                                # Fallback to Matplotlib PdfPages
-                                from matplotlib.backends.backend_pdf import PdfPages
-                                with PdfPages(pdf_path) as pdf:
-                                    if selected.get('bu') and not bu_df.empty:
-                                        fig1, ax1 = plt.subplots(figsize=(8.5, 11))
-                                        ax1.axis('off')
-                                        tbl = ax1.table(cellText=bu_df.values.tolist(), colLabels=list(bu_df.columns), loc='center')
-                                        tbl.auto_set_font_size(False); tbl.set_fontsize(8); tbl.scale(1, 1.2)
-                                        plt.tight_layout(); pdf.savefig(fig1); plt.close(fig1)
-                                    if selected.get('crit') and not crit_df.empty:
-                                        fig2, ax2 = plt.subplots(figsize=(11, 6))
-                                        bars = ax2.bar(range(len(crit_df)), crit_df['criticality'])
-                                        ax2.set_title('Division Criticality Comparison')
-                                        ax2.set_xlabel('Divisions'); ax2.set_ylabel('Criticality')
-                                        plt.xticks(range(len(crit_df)), crit_df['division'].tolist(), rotation=45, ha='right')
-                                        for bar, score in zip(bars, crit_df['criticality']):
-                                            if score >= 8: bar.set_color('#ff9999')
-                                            elif score >= 4: bar.set_color('#ffcc99')
-                                            else: bar.set_color('#99cc99')
-                                        for bar in bars:
-                                            h = bar.get_height(); ax2.text(bar.get_x()+bar.get_width()/2., h, f'{h:.1f}', ha='center', va='bottom')
-                                        plt.tight_layout(); pdf.savefig(fig2); plt.close(fig2)
-                                    if selected.get('risk') and not risk_df.empty:
-                                        fig3, ax3 = plt.subplots(figsize=(11, 8))
-                                        ax3.axis('off')
-                                        preview = risk_df.head(40)
-                                        tbl = ax3.table(cellText=preview.values.tolist(), colLabels=list(preview.columns), loc='center')
-                                        tbl.auto_set_font_size(False); tbl.set_fontsize(6); tbl.scale(1, 1.0)
-                                        plt.tight_layout(); pdf.savefig(fig3); plt.close(fig3)
-                                messagebox.showinfo('Export Complete', f'PDF saved to {pdf_path}')
-                        except Exception as e:
-                            messagebox.showerror('Export Error', f'Failed to export PDF: {e}')
-
-                    # Build user-defined export modal
-                    def _show_export_modal():
-                        modal = tk.Toplevel(self)
-                        modal.transient(self); modal.grab_set()
-                        modal.title('Export Reports')
-                        modal.geometry('460x320')
-
-                        # Destination folder with change option
-                        folder_frame = ttk.Frame(modal); folder_frame.pack(fill='x', padx=12, pady=(10, 4))
-                        ttk.Label(folder_frame, text='Destination:').pack(side='left')
-                        dest_var = tk.StringVar(value=outdir)
-                        dest_lbl = ttk.Label(folder_frame, textvariable=dest_var)
-                        dest_lbl.pack(side='left', padx=6)
-                        def _change_dest():
-                            newdir = filedialog.askdirectory(title='Select output folder for exports', initialdir=dest_var.get())
-                            if newdir:
-                                dest_var.set(newdir)
-                        ttk.Button(folder_frame, text='Change...', command=_change_dest).pack(side='right')
-
-                        # Dataset selection
-                        section1 = ttk.LabelFrame(modal, text='Datasets')
-                        section1.pack(fill='x', padx=12, pady=6)
-                        var_risk = tk.BooleanVar(value=True)
-                        var_bu = tk.BooleanVar(value=True)
-                        var_crit = tk.BooleanVar(value=True)
-                        ttk.Checkbutton(section1, text='Risk Range (Integrations)', variable=var_risk).pack(anchor='w', padx=8, pady=2)
-                        ttk.Checkbutton(section1, text='Business Unit Risk (Averages)', variable=var_bu).pack(anchor='w', padx=8, pady=2)
-                        ttk.Checkbutton(section1, text='Division Criticality', variable=var_crit).pack(anchor='w', padx=8, pady=2)
-
-                        # Filters
-                        section2 = ttk.LabelFrame(modal, text='Filters')
-                        section2.pack(fill='x', padx=12, pady=6)
-                        # Business Unit dropdown
-                        bu_values = ['All']
-                        try:
-                            # Reuse existing get_departments() which returns (id,name)
-                            bu_values += [name for (_, name) in self.get_departments()]
-                        except Exception:
-                            pass
-                        ttk.Label(section2, text='Business Unit:').grid(row=0, column=0, sticky='e', padx=8, pady=4)
-                        bu_sel = ttk.Combobox(section2, values=bu_values, state='readonly', width=28)
-                        bu_sel.set('All')
-                        bu_sel.grid(row=0, column=1, sticky='w', padx=8, pady=4)
-                        ttk.Label(section2, text='Division contains:').grid(row=1, column=0, sticky='e', padx=8, pady=4)
-                        div_var = tk.StringVar()
-                        ttk.Entry(section2, textvariable=div_var, width=30).grid(row=1, column=1, sticky='w', padx=8, pady=4)
-
-                        # Export format
-                        section3 = ttk.LabelFrame(modal, text='Format')
-                        section3.pack(fill='x', padx=12, pady=6)
-                        fmt_var = tk.StringVar(value='pdf')
-                        ttk.Radiobutton(section3, text='CSV', variable=fmt_var, value='csv').pack(side='left', padx=10, pady=4)
-                        ttk.Radiobutton(section3, text='Excel (.xlsx)', variable=fmt_var, value='xlsx').pack(side='left', padx=10, pady=4)
-                        ttk.Radiobutton(section3, text='PDF', variable=fmt_var, value='pdf').pack(side='left', padx=10, pady=4)
-
-                        # Action buttons
-                        btns = ttk.Frame(modal); btns.pack(pady=10)
-                        def _export_and_close():
-                            selected = {'risk': var_risk.get(), 'bu': var_bu.get(), 'crit': var_crit.get()}
-                            filters = {
-                                'bu': None if bu_sel.get() in (None, '', 'All') else bu_sel.get(),
-                                'division_contains': (div_var.get() or '').strip() or None
-                            }
-                            # Update outdir from dest_var
-                            nonlocal outdir
-                            outdir = dest_var.get()
-                            if fmt_var.get() == 'csv':
-                                export_csv(selected, filters)
-                            elif fmt_var.get() == 'xlsx':
-                                export_xlsx(selected, filters)
-                            else:
-                                export_pdf(selected, filters)
-                            modal.destroy()
-                        ttk.Button(btns, text='Export', command=_export_and_close, style='Primary.TButton', width=14).pack(side='left', padx=6)
-                        ttk.Button(btns, text='Cancel', command=modal.destroy, width=12).pack(side='left', padx=6)
-
-                    _show_export_modal()
-                except Exception as e:
-                    messagebox.showerror('Export Error', f'Export failed: {e}')
-
-        print_reports_btn = ttk.Button(left_btns_frame, text='Print Reports', command=on_print_reports, style='Primary.TButton', width=btn_width)
-        print_reports_btn.pack(side='top')
 
         # Add button to generate smoke test data for reports (moved to Risk tab top-right)
         def on_generate_smoke():
@@ -1576,7 +1378,11 @@ class AppTracker(tk.Tk):
             # Left-align text columns, center-align numeric columns
             anchor = 'w' if col in ('Name', 'Vendor') else 'center'
             # Use consistent column names
-            heading_text = 'Cust Service' if col == 'CustomerService' else col
+            heading_text = (
+                'Cust Service' if col == 'CustomerService' else (
+                    'System/Integration' if col == 'Name' else col
+                )
+            )
             # Align integration headings with left-anchored values where applicable
             self.integrations_tree.heading(col, text=heading_text, anchor='w',
                                         command=lambda c=col: self.sort_integration_table(c, False))
@@ -2336,23 +2142,49 @@ class AppTracker(tk.Tk):
             self.details_text.delete('1.0', 'end')
             
             # Format the details nicely with safe conversion
-            risk_score = 0
+            # Risk score as float with one decimal
+            risk_score = 0.0
             try:
                 if integration[14] is not None:  # risk_score is at index 14
                     risk_score = float(integration[14])
             except (ValueError, TypeError):
-                pass
-                
-            details = (
-                f"Integration: {integration[2]}\n"
-                f"Vendor: {integration[3] or 'N/A'}\n"
-                f"Risk Score: {risk_score if risk_score > 0 else 'N/A'} "
-                f"({database.dr_priority_band(risk_score)})\n"
-                f"Last Modified: {integration[15] or 'N/A'}\n"
-                f"Notes: {integration[13] or 'N/A'}"
-            )
-            
-            self.details_text.insert('1.0', details)
+                risk_score = 0.0
+
+            # Determine color tag and band label
+            band = database.dr_priority_band(risk_score)
+            if risk_score is None or risk_score <= 0:
+                risk_tag = 'risk_na'
+            else:
+                color_name = get_risk_color(risk_score)
+                risk_tag = f"risk_{color_name}" if color_name else 'risk_na'
+
+            # Convert last modified to Eastern Time, show without fractional seconds
+            last_mod_display = 'N/A'
+            try:
+                last_raw = integration[15]
+                if last_raw:
+                    from datetime import datetime, timezone
+                    from zoneinfo import ZoneInfo
+                    dt = datetime.fromisoformat(last_raw)
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    et_dt = dt.astimezone(ZoneInfo('America/New_York'))
+                    last_mod_display = et_dt.strftime('%Y-%m-%d %H:%M:%S ET')
+            except Exception:
+                # Fallback to raw value if parsing or tz conversion fails
+                last_mod_display = integration[15] or 'N/A'
+
+            # Build details with color-highlighted risk score and ET timestamp
+            self.details_text.insert('end', f"Integration: {integration[2]}\n")
+            self.details_text.insert('end', f"Vendor: {integration[3] or 'N/A'}\n")
+            self.details_text.insert('end', "Risk Score: ")
+            if risk_score is None or risk_score <= 0:
+                self.details_text.insert('end', 'N/A', risk_tag)
+            else:
+                self.details_text.insert('end', f"{risk_score:.1f}", risk_tag)
+            self.details_text.insert('end', f" ({band})\n")
+            self.details_text.insert('end', f"Last Modified: {last_mod_display}\n")
+            self.details_text.insert('end', f"Notes: {integration[13] or 'N/A'}")
             self.details_text.configure(state='disabled')
             
         except Exception as e:
