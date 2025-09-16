@@ -419,12 +419,12 @@ class AppTracker(tk.Tk):
         for widget in chart_frame.winfo_children():
             widget.destroy()
             
-        # Get system data from database
+        # Get division data from database
         conn = database.connect_db()
         c = conn.cursor()
-        c.execute('''SELECT name, criticality, risk_score 
+        c.execute('''SELECT division, criticality, risk_score 
                      FROM applications 
-                     ORDER BY name''')
+                     ORDER BY division''')
         data = c.fetchall()
         conn.close()
         
@@ -1264,7 +1264,8 @@ class AppTracker(tk.Tk):
         cat_frame.grid(row=8, column=1, sticky='nsew', padx=padx, pady=(0, pady))
         cat_frame.grid_propagate(False)
         cat_frame.configure(width=250, height=120)
-        self.category_listbox = tk.Listbox(cat_frame, selectmode='browse', exportselection=0,
+        # Allow multiple categories to be linked
+        self.category_listbox = tk.Listbox(cat_frame, selectmode='multiple', exportselection=0,
                                            height=6, width=30, bg='white', font=('Segoe UI', 10),
                                            highlightthickness=1, highlightcolor=ACCENT, borderwidth=1)
         self.category_listbox.pack(side='left', fill='both', expand=True)
@@ -1325,6 +1326,12 @@ class AppTracker(tk.Tk):
         try:
             import_btn = ttk.Button(top_buttons_frame, text='Import CSV', command=self.import_csv_dialog, style='Secondary.TButton')
             import_btn.pack(side='right', padx=6)
+        except Exception:
+            pass
+        # Diagnose CSV button
+        try:
+            diagnose_btn = ttk.Button(top_buttons_frame, text='Diagnose CSV', command=self.diagnose_csv_dialog, style='Secondary.TButton')
+            diagnose_btn.pack(side='right', padx=6)
         except Exception:
             pass
         
@@ -1390,13 +1397,13 @@ class AppTracker(tk.Tk):
         # Create search options in a separate row for clarity - radio buttons first
         options_frame = ttk.Frame(search_frame)
         options_frame.pack(side='top', fill='x', pady=2)
-        
+
         # Add radio buttons for search type
-        self.search_type_var = tk.StringVar(value="Name")
-        ttk.Radiobutton(options_frame, text="Name", variable=self.search_type_var, 
-                       value="Name", command=self.update_search_selections).pack(side='left', padx=(5,5))
-        ttk.Radiobutton(options_frame, text="Business Unit", variable=self.search_type_var, 
-                       value="Business Unit", command=self.update_search_selections).pack(side='left', padx=5)
+        self.search_type_var = tk.StringVar(value="Division")
+        ttk.Radiobutton(options_frame, text="Division", variable=self.search_type_var,
+                        value="Division", command=self.update_search_selections).pack(side='left', padx=(5,5))
+        ttk.Radiobutton(options_frame, text="Business Unit", variable=self.search_type_var,
+                        value="Business Unit", command=self.update_search_selections).pack(side='left', padx=5)
         
         # Move search container below the radio buttons
         search_container.pack_forget()  # Remove the current packing of the search container
@@ -1441,7 +1448,7 @@ class AppTracker(tk.Tk):
         )
         # tuned widths and anchors to align like the provided screenshot
         cols = list(self.tree['columns'])
-        base_widths = {'Business Unit': 380, 'Division': 260, 'Category': 180, 'Last Modified': 140}
+        base_widths = {'Business Unit': 380, 'Division': 260, 'Category': 250, 'Last Modified': 200}
         for col in cols:
             w = base_widths.get(col, 120)
             if col == 'Business Unit':
@@ -1600,6 +1607,16 @@ class AppTracker(tk.Tk):
                 self.name_entry.insert(0, app_row['name'] if hasattr(app_row, 'keys') and 'name' in app_row.keys() else app_row[1])
             except Exception:
                 pass
+            # Preselect categories for this app
+            try:
+                self.category_listbox.selection_clear(0, tk.END)
+                cat_names = set(database.get_app_categories(app_id))
+                cats = self.get_categories()
+                for i, (_, cname) in enumerate(cats):
+                    if cname in cat_names:
+                        self.category_listbox.selection_set(i)
+            except Exception:
+                pass
         except Exception as e:
             messagebox.showerror('Error', f'Failed to load selected row for editing: {e}')
 
@@ -1625,18 +1642,22 @@ class AppTracker(tk.Tk):
         #     messagebox.showerror('Error', 'All factor fields must be integers.')
         #     return
         fields['name'] = name
-        # If a category is selected, set category_id
-        try:
-            sel = self.category_listbox.curselection()
-            if sel:
-                cats = self.get_categories()
-                if sel[0] < len(cats):
-                    fields['category_id'] = cats[sel[0]][0]
-        except Exception:
-            pass
+        # If categories are selected, set many-to-many links after update
         # fields['vendor'] = vendor
         # update db
         database.update_application(app_id, fields)
+        # Update many-to-many category links
+        try:
+            sel = self.category_listbox.curselection()
+            ids = []
+            if sel:
+                cats = self.get_categories()
+                for idx in sel:
+                    if idx < len(cats):
+                        ids.append(cats[idx][0])
+            database.set_app_categories(app_id, ids)
+        except Exception:
+            pass
         self.refresh_table()
         
         # Clear form fields after saving
@@ -1688,10 +1709,13 @@ class AppTracker(tk.Tk):
                 if app_ids:
                     app_id = app_ids
                     sel = self.category_listbox.curselection()
+                    ids = []
                     if sel:
                         cats = self.get_categories()
-                        if sel[0] < len(cats):
-                            database.update_application(app_id, {'category_id': cats[sel[0]][0]})
+                        for idx in sel:
+                            if idx < len(cats):
+                                ids.append(cats[idx][0])
+                    database.set_app_categories(app_id, ids)
             except Exception:
                 pass
         except Exception as e:
@@ -1722,7 +1746,7 @@ class AppTracker(tk.Tk):
         if not hasattr(self, 'search_entry') or self.search_entry is None:
             return
             
-        search_type = "Name"
+        search_type = "Division"
         if hasattr(self, 'search_type_var') and self.search_type_var is not None:
             search_type = self.search_type_var.get()
             
@@ -1730,8 +1754,8 @@ class AppTracker(tk.Tk):
         conn = database.sqlite3.connect(database.DB_NAME)
         c = conn.cursor()
         
-        if search_type == "Name":
-            c.execute("SELECT DISTINCT name FROM applications ORDER BY name")
+        if search_type == "Division":
+            c.execute("SELECT DISTINCT division FROM applications ORDER BY division")
             values = [row[0] for row in c.fetchall()]
         else:  # Business Unit
             c.execute("SELECT DISTINCT name FROM business_units ORDER BY name")
@@ -1745,12 +1769,13 @@ class AppTracker(tk.Tk):
     def refresh_table(self):
         for row in self.tree.get_children():
             self.tree.delete(row)
-        conn = database.sqlite3.connect(database.DB_NAME)
+        # Use database helper to get a connection with the right row factory
+        conn = database.connect_db()
         c = conn.cursor()
         
         # Get search parameters if available
         search_text = ""
-        search_type = "Name"
+        search_type = "Division"
         if hasattr(self, 'search_entry') and self.search_entry is not None:
             entered_text = self.search_entry.get().strip().lower()
             # Don't search if the placeholder text is showing
@@ -1771,7 +1796,7 @@ class AppTracker(tk.Tk):
         except Exception:
             avg_map = {}
 
-        c.execute('''SELECT id, name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, notes, risk_score, last_modified, category_id FROM applications''')
+        c.execute('''SELECT id, division AS name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, notes, risk_score, last_modified, category_id FROM applications''')
         rows = []
         for app_row in c.fetchall():
             # Determine app id reliably
@@ -1789,21 +1814,10 @@ class AppTracker(tk.Tk):
             avg_integration_risk = avg_map.get(app_id)
             risk_score = avg_integration_risk if avg_integration_risk is not None else 0
 
-            # Get last_modified as date string
-            last_mod_raw = None
-            try:
-                if hasattr(app_row, 'keys'):
-                    last_mod_raw = app_row.get('last_modified') or app_row.get('lastmodified')
-                else:
-                    last_mod_raw = app_row[14] if len(app_row) > 14 else None
-            except Exception:
-                last_mod_raw = None
-            last_mod_display = ''
-            if last_mod_raw:
-                try:
-                    last_mod_display = datetime.fromisoformat(last_mod_raw).date().isoformat()
-                except Exception:
-                    last_mod_display = str(last_mod_raw).split('T')[0]
+            # Initialize default values to prevent unbound variable errors
+            category_display = ''
+            last_mod = ''
+            division = ''
 
             # Division: use 'name' as the Division column (previously System column)
             try:
@@ -1811,26 +1825,53 @@ class AppTracker(tk.Tk):
             except Exception:
                 division = app_row[1]
 
-            # Category: look up via category_id
-            category_display = ''
+            # Category: get and display joined category names (many-to-many) and last modified date
+            conn_cat = None
             try:
-                cat_id = None
-                if hasattr(app_row, 'keys'):
-                    cat_id = app_row.get('category_id')
+                # Get categories and last modified date in one transaction
+                conn_cat = database.connect_db()  # Get fresh connection to avoid stale data
+                cur_cat = conn_cat.cursor()
+                
+                # Get categories
+                cur_cat.execute('''
+                    SELECT DISTINCT c.name
+                    FROM categories c
+                    JOIN application_categories ac ON c.id = ac.category_id
+                    WHERE ac.app_id = ?
+                    ORDER BY c.name
+                ''', (app_id,))
+                names = [row[0] for row in cur_cat.fetchall()]
+                if names:
+                    category_display = ', '.join(names)
+                    print(f"DEBUG: App {app_id} ({division}) categories: {category_display}")
                 else:
-                    cat_id = app_row[15] if len(app_row) > 15 else None
-                if cat_id:
-                    cat_name = database.get_category_name(cat_id)
-                    category_display = cat_name or ''
-            except Exception:
-                category_display = ''
+                    print(f"DEBUG: No categories found for app {app_id} ({division})")
 
-            # User requested Business Unit first, then Division
-            row = (dept_str, division, category_display, last_mod_display)
+                # Get the most recent last modified date from integrations
+                cur_cat.execute('''
+                    SELECT MAX(last_modified) 
+                    FROM system_integrations 
+                    WHERE parent_app_id = ?
+                ''', (app_id,))
+                last_mod_result = cur_cat.fetchone()
+                if last_mod_result and last_mod_result[0]:
+                    last_mod = str(last_mod_result[0]).split('.')[0]  # Remove microseconds if present
+                    if 'T' in last_mod:  # Handle ISO format
+                        last_mod = last_mod.replace('T', ' ')
+
+            except Exception as e:
+                print(f"DEBUG: Error getting categories/last modified for app {app_id}: {e}")
+                category_display = ''
+                last_mod = ''
+            finally:
+                if conn_cat:
+                    conn_cat.close()            # User requested Business Unit first, then Division
+            # Create the row with the last_mod from our fresh query instead of the stale data
+            row = (dept_str, division, category_display, last_mod)
 
             # Apply search filtering
             if search_text:
-                if search_type == "Name" and search_text.lower() not in (division or '').lower():
+                if search_type == "Division" and search_text.lower() not in (division or '').lower():
                     continue
                 elif search_type == "Business Unit" and not any(search_text.lower() in dept.lower() for dept in depts):
                     continue
@@ -2265,6 +2306,200 @@ class AppTracker(tk.Tk):
         except Exception as e:
             messagebox.showerror('Import Error', f'Failed to open CSV file: {e}')
 
+    def diagnose_csv_dialog(self):
+        """Open file dialog and run a read-only diagnosis for a CSV file."""
+        try:
+            from tkinter import filedialog
+            path = filedialog.askopenfilename(title='Select CSV file to diagnose', filetypes=[('CSV/TSV files', '*.csv;*.tsv;*.*')])
+            if not path:
+                return
+            import threading
+            t = threading.Thread(target=lambda: self.diagnose_csv_worker(path), daemon=True)
+            t.start()
+        except Exception as e:
+            messagebox.showerror('Diagnose Error', f'Failed to open CSV file: {e}')
+
+    def _show_diagnose_result(self, result):
+        """Show diagnosis details in a lightweight window."""
+        try:
+            if isinstance(result, dict) and result.get('error'):
+                messagebox.showerror('CSV Diagnose', result['error'])
+                return
+            win = tk.Toplevel(self)
+            win.title('CSV Import Diagnose')
+            win.geometry('700x500')
+            frame = ttk.Frame(win, padding=10)
+            frame.pack(fill='both', expand=True)
+            text = tk.Text(frame, wrap='word')
+            vsb = ttk.Scrollbar(frame, orient='vertical', command=text.yview)
+            text.configure(yscrollcommand=vsb.set)
+            text.pack(side='left', fill='both', expand=True)
+            vsb.pack(side='right', fill='y')
+
+            lines = []
+            lines.append(f"Detected delimiter: {repr(result.get('delimiter'))}")
+            headers = result.get('headers') or []
+            lines.append(f"Headers ({len(headers)}): {', '.join(headers)}")
+            lines.append("")
+            lines.append("Header mapping (normalized -> original):")
+            header_map = result.get('header_map') or {}
+            for k in sorted(header_map.keys()):
+                lines.append(f"  {k} -> {header_map[k]}")
+            lines.append("")
+            lines.append(f"Applications to CREATE: {result.get('apps_to_create', 0)}")
+            lines.append(f"Applications existing/updated: {result.get('apps_existing_or_update', 0)}")
+            lines.append(f"Integrations to CREATE: {result.get('integrations_to_create', 0)}")
+            lines.append(f"Rows analyzed: {result.get('rows_analyzed', 0)}")
+            errs = result.get('errors') or []
+            if errs:
+                lines.append("")
+                lines.append(f"Notes/Warnings ({len(errs)}):")
+                for e in errs[:50]:
+                    lines.append(f"  - {e}")
+                if len(errs) > 50:
+                    lines.append(f"  ...and {len(errs)-50} more")
+            text.insert('1.0', "\n".join(lines))
+            text.configure(state='disabled')
+            ttk.Button(frame, text='Close', command=win.destroy).pack(pady=8)
+        except Exception as e:
+            messagebox.showerror('CSV Diagnose', f'Failed to show diagnosis: {e}')
+
+    def diagnose_csv_worker(self, path):
+        """Background worker to diagnose a CSV without writing to DB."""
+        try:
+            result = self.diagnose_csv_file(path)
+        except Exception as e:
+            result = {'error': str(e)}
+        try:
+            self.after(1, lambda: self._show_diagnose_result(result))
+        except Exception:
+            pass
+
+    def diagnose_csv_file(self, path):
+        """Return a summary of what would be imported without writing."""
+        import csv
+        # Reuse robust delimiter detection similar to import
+        def _detect_delimiter(pth):
+            candidates = [',', '\t', ';', '|']
+            try:
+                with open(pth, 'r', encoding='utf-8-sig') as f:
+                    head = f.read(4096)
+                    first_line = head.splitlines()[0] if head else ''
+                    counts = {d: first_line.count(d) for d in candidates}
+                    best = max(counts.keys(), key=lambda d: counts[d]) if counts else ','
+                    if counts.get(best, 0) > 0:
+                        return best
+                    try:
+                        sniffer = csv.Sniffer()
+                        dialect = sniffer.sniff(head, delimiters=''.join(candidates))
+                        return getattr(dialect, 'delimiter', ',')
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            try:
+                with open(pth, 'r', encoding='utf-8-sig') as f:
+                    body = f.read(2048)
+                    if '\t' in body:
+                        return '\t'
+            except Exception:
+                pass
+            return ','
+
+        delim = _detect_delimiter(path)
+        headers = []
+        errors = []
+        apps_to_create = 0
+        apps_existing_or_update = 0
+        integrations_to_create = 0
+        rows_analyzed = 0
+
+        # Build existing application name set (normalized)
+        conn = None
+        try:
+            conn = database.connect_db()
+            cur = conn.cursor()
+            cur.execute('SELECT LOWER(TRIM(name)) FROM applications')
+            existing = {row[0] for row in cur.fetchall() if row and row[0] is not None}
+        finally:
+            try:
+                if conn:
+                    conn.close()
+            except Exception:
+                pass
+
+        # Helpers mirroring import logic
+        import re
+        def _norm_key(s: str) -> str:
+            try:
+                return re.sub(r'[^a-z0-9]', '', str(s).strip().lower())
+            except Exception:
+                return ''
+
+        with open(path, newline='', encoding='utf-8-sig') as fh:
+            reader = csv.DictReader(fh, delimiter=delim)
+            if reader.fieldnames is None:
+                return {'error': 'CSV file has no header row.'}
+            headers = [h for h in reader.fieldnames if h is not None]
+            header_map = {}
+            for h in headers:
+                header_map[_norm_key(h)] = h
+                header_map[str(h).strip()] = h
+
+            def get(raw, *opts):
+                for opt in opts:
+                    if opt in header_map:
+                        val = raw.get(header_map[opt])
+                        if val is not None:
+                            cv = str(val).strip()
+                            return '' if cv.lower() == 'none' else cv
+                    nk = _norm_key(opt)
+                    if nk in header_map:
+                        val = raw.get(header_map[nk])
+                        if val is not None:
+                            cv = str(val).strip()
+                            return '' if cv.lower() == 'none' else cv
+                return ''
+
+            seen_new = set()
+
+            for row in reader:
+                try:
+                    if not row or all((v is None or str(v).strip() == '' for v in row.values())):
+                        continue
+                    rows_analyzed += 1
+                    app_name = get(row, 'name', 'app_name', 'app name', 'application_name', 'application name', 'Application Name', 'Division', 'division', 'division_name', 'system', 'system_name', 'System Name') or ''
+                    if not app_name:
+                        # No app name -> cannot create app; but may still create integration? We'll count integration only if app exists in DB already
+                        int_name = get(row, 'integration_name', 'integration')
+                        if int_name:
+                            # If app isn't named, importer would skip this row; note warning
+                            errors.append('Row with integration but empty app name skipped')
+                        continue
+                    norm_app = app_name.strip().lower()
+                    if norm_app not in existing and norm_app not in seen_new:
+                        apps_to_create += 1
+                        seen_new.add(norm_app)
+                    else:
+                        apps_existing_or_update += 1
+
+                    int_name = get(row, 'integration_name', 'integration')
+                    if int_name:
+                        integrations_to_create += 1
+                except Exception as e:
+                    errors.append(f"Row diagnose error: {e}")
+
+        return {
+            'delimiter': delim,
+            'headers': headers,
+            'header_map': {k: header_map[k] for k in header_map},
+            'apps_to_create': apps_to_create,
+            'apps_existing_or_update': apps_existing_or_update,
+            'integrations_to_create': integrations_to_create,
+            'rows_analyzed': rows_analyzed,
+            'errors': errors,
+        }
+
     # Minimal progress window used during long-running imports
     class ProgressWindow(tk.Toplevel):
         def __init__(self, parent, title='Progress', message='Working...'):
@@ -2352,7 +2587,7 @@ class AppTracker(tk.Tk):
 
         # Expected header columns (case-insensitive match)
         expected_cols = [
-            'name', 'vendor', 'business_unit', 'score', 'need', 'criticality', 'installed',
+            'division', 'name', 'vendor', 'business_unit', 'score', 'need', 'criticality', 'installed',
             'disasterrecovery', 'safety', 'security', 'monetary', 'customerservice', 'notes',
             'category',
             'integration_name', 'integration_vendor', 'integration_score', 'integration_need', 'integration_criticality',
@@ -2366,25 +2601,44 @@ class AppTracker(tk.Tk):
 
         # Detect CSV delimiter (handles tab, comma, semicolon, pipe)
         def _detect_delimiter(pth):
-            sample = ''
+            """Robust delimiter detection with heuristic and sniffer fallback."""
+            candidates = [',', '\t', ';', '|']
             try:
-                with open(pth, 'r', encoding='utf-8') as f:
-                    sample = f.read(4096)
-                    sniffer = csv.Sniffer()
-                    # Use common delimiters; Sniffer expects a string of possible delimiters
-                    dialect = sniffer.sniff(sample, delimiters=",;\t|")
-                    return getattr(dialect, 'delimiter', ',')
+                # Read a small initial chunk and the first non-empty line
+                with open(pth, 'r', encoding='utf-8-sig') as f:
+                    head = f.read(4096)
+                    # Heuristic: count occurrences in the first line
+                    first_line = head.splitlines()[0] if head else ''
+                    counts = {d: first_line.count(d) for d in candidates}
+                    # Choose delimiter with highest count in first line
+                    best = max(counts.keys(), key=lambda d: counts[d]) if counts else ','
+                    if counts.get(best, 0) > 0:
+                        return best
+                    # Fallback to csv.Sniffer across candidates
+                    try:
+                        sniffer = csv.Sniffer()
+                        dialect = sniffer.sniff(head, delimiters=''.join(candidates))
+                        return getattr(dialect, 'delimiter', ',')
+                    except Exception:
+                        pass
             except Exception:
-                if '\t' in sample:
-                    return '\t'
-                return ','
+                pass
+            # Last resort default to tab if present in file, else comma
+            try:
+                with open(pth, 'r', encoding='utf-8-sig') as f:
+                    body = f.read(2048)
+                    if '\t' in body:
+                        return '\t'
+            except Exception:
+                pass
+            return ','
 
         delim = _detect_delimiter(path)
 
         # First count total rows
         total_rows = 0
         try:
-            with open(path, newline='', encoding='utf-8') as fh:
+            with open(path, newline='', encoding='utf-8-sig') as fh:
                 total_rows = sum(1 for _ in csv.DictReader(fh, delimiter=delim))
         except Exception as e:
             return {'error': f'Failed to count rows: {e}'}
@@ -2394,14 +2648,14 @@ class AppTracker(tk.Tk):
         print("DEBUG: Database schema initialized")
         
         # Debug: Print out header fields
-        with open(path, newline='', encoding='utf-8') as fh:
+        with open(path, newline='', encoding='utf-8-sig') as fh:
             reader = csv.DictReader(fh, delimiter=delim)
             if reader.fieldnames:
                 print("DEBUG: CSV Headers:", reader.fieldnames)
         
         # Open file and process rows
         try:
-            with open(path, newline='', encoding='utf-8') as fh:
+            with open(path, newline='', encoding='utf-8-sig') as fh:
                 reader = csv.DictReader(fh, delimiter=delim)
                 if reader.fieldnames is None:
                     return {'error': 'CSV file has no header row.'}
@@ -2418,13 +2672,21 @@ class AppTracker(tk.Tk):
                     header_map[normalized] = h
                     header_map[str(h).strip()] = h  # Also keep original version
 
-                # check presence of minimal columns - check both normalized and original
-                if not any(key in header_map for key in ['appname', 'app_name', 'name', 'name'.replace('_','')]):
-                    return {'error': 'CSV must include an App Name column (e.g., "app_name", "name", or "App Name").'}
+                # check presence of minimal columns - accept many aliases for application name
+                required_name_aliases = [
+                    'name', 'app_name', 'appname',
+                    'application_name', 'applicationname', 'application name',
+                    'division', 'division_name', 'divisionname', 'division name',
+                    'system', 'system_name', 'systemname', 'system name',
+                    'app name', 'App Name', 'Application Name'
+                ]
+                if not any((alias in header_map or ''.join(filter(str.isalnum, alias.lower())) in header_map) for alias in required_name_aliases):
+                    return {'error': 'CSV must include an Application/Division name column (e.g., "Application Name", "App Name", "Division", or "Name").'}
 
                 # Create a new database connection for this thread with timeout and immediate mode
                 import sqlite3
-                conn = sqlite3.connect(database.DB_NAME, timeout=60.0, isolation_level='IMMEDIATE')  # Longer timeout and immediate mode
+                # Use default (deferred) isolation to minimize locking; extend timeout
+                conn = sqlite3.connect(database.DB_NAME, timeout=60.0)
                 conn.execute('PRAGMA busy_timeout = 60000')  # Set busy timeout to 60 seconds
                 cur = conn.cursor()
 
@@ -2488,9 +2750,10 @@ class AppTracker(tk.Tk):
                     except Exception:
                         return default
 
-                # cache for app name -> id, and remember last non-empty BU(s) per app
+                # cache for app name -> id, remember last non-empty BU(s) per app, and accumulate categories
                 app_cache = {}
                 app_bu_map = {}
+                app_category_accum = {}  # app_name -> set of category names accumulated across rows
 
                 # helper to flexibly read a field by multiple key options using normalized header mapping
                 def get(*opts):
@@ -2499,13 +2762,15 @@ class AppTracker(tk.Tk):
                         if opt in header_map:
                             val = raw.get(header_map[opt])
                             if val is not None:
-                                return str(val).strip()
+                                cv = str(val).strip()
+                                return '' if cv.lower() == 'none' else cv
                         # Try normalized version
                         nk = _norm_key(opt)
                         if nk in header_map:
                             val = raw.get(header_map[nk])
                             if val is not None:
-                                return str(val).strip()
+                                cv = str(val).strip()
+                                return '' if cv.lower() == 'none' else cv
                     return ''
 
                 # parse potentially multiple BU names from a field
@@ -2521,6 +2786,24 @@ class AppTracker(tk.Tk):
                             names.append(nm)
                     return names
 
+                                # parse multiple category names from Category field
+                def parse_category_names(val: str):
+                    if val is None:
+                        return []
+                    # First split on commas or semicolons between major categories
+                    categories = re.split(r'\s*[;,]\s*', str(val))
+                    out = []
+                    for cat in categories:
+                        # Then split on forward slash or vertical bar for subcategories
+                        subcats = re.split(r'\s*[/|]\s*', cat)
+                        for subcat in subcats:
+                            nm = ' '.join(subcat.split()).strip()
+                            if nm and nm.lower() != 'none':
+                                out.append(nm)
+                    return out
+
+                # Initialize app name tracking
+                last_app_name = None  # carry forward the last non-empty application/division name
                 for rownum, raw in enumerate(reader, start=2):
                     try:
                         # Skip completely blank rows (all empty/whitespace)
@@ -2530,18 +2813,42 @@ class AppTracker(tk.Tk):
                         except Exception:
                             pass
                         # Map fields flexibly with normalized keys
-                        app_name = get('name', 'app_name', 'App Name') or ''
-                        # Skip rows without an application name to avoid blank entries
+                        app_name = get('name', 'app_name', 'app name', 'application_name', 'application name', 'Application Name', 'Division', 'division', 'division_name', 'system', 'system_name', 'System Name') or ''
+                        # If this row omits the division/application name, carry forward the last one
+                        if not app_name and last_app_name:
+                            app_name = last_app_name
+                        # Skip rows without any application name to avoid blank entries
                         if not app_name:
                             continue
                         vendor = get('vendor', 'Vendor') or ''
-                        category_name = get('category', 'Category') or ''
+                        # Get categories from both main category field and any integration-specific categories
+                        main_category = get('category', 'Category') or ''
+                        int_category = get('integration_category', 'Category Type', 'CategoryType', 'System Type') or ''
+                        
+                        # Collect all categories
+                        all_categories = []
+                        if main_category:
+                            all_categories.extend(parse_category_names(main_category))
+                        if int_category:
+                            all_categories.extend(parse_category_names(int_category))
+                        
+                        # Accumulate unique categories for this app
+                        if all_categories:
+                            acc = app_category_accum.setdefault(app_name, set())
+                            for nm in all_categories:
+                                nm_clean = nm.strip()
+                                if nm_clean:
+                                    acc.add(nm_clean)
+                            print(f"DEBUG: Accumulated categories for {app_name}: {sorted(acc)}")
                         # Accept multiple possible BU header names, including 'Business Unit / Division'
                         bu_field_val = get('business_unit', 'businessunit', 'Business Unit', 'business_unit_division', 'businessunitdivision', 'Business Unit / Division', 'department', 'dept', 'bu') or ''
                         bu_names = parse_bu_names(bu_field_val)
                         if bu_names:
                             app_bu_map[app_name] = bu_names
                         notes = get('notes', 'Notes') or ''
+                        # Remember last non-empty app name for subsequent rows
+                        if app_name:
+                            last_app_name = app_name
 
                         # Application rating fields
                         score = parse_int(get('score', 'Score'), 0)
@@ -2575,9 +2882,32 @@ class AppTracker(tk.Tk):
                         last_mod = get('integration_last_modified') or get('last_modified') or None
 
                         # Ensure application exists (by name). If multiple apps have same name, pick first.
+                        # First get or create all categories for this app from accumulated set
+                        try:
+                            all_cats = sorted(app_category_accum.get(app_name, set()))
+                            cat_ids = []
+                            print(f"DEBUG: Processing accumulated categories for {app_name}: {all_cats}")
+                            # Create all needed categories first
+                            for nm in all_cats:
+                                nm_clean = nm.strip()
+                                if not nm_clean:
+                                    continue
+                                cur.execute('SELECT id FROM categories WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', (nm_clean,))
+                                crow = cur.fetchone()
+                                if crow:
+                                    cat_ids.append(crow[0])
+                                else:
+                                    cur.execute('INSERT INTO categories (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)', (nm_clean,))
+                                    cat_ids.append(cur.lastrowid)
+                            conn.commit()
+                        except Exception as e:
+                            print(f"DEBUG: Error ensuring categories exist: {e}")
+                            cat_ids = []
+
+                        # Now check if app exists
                         app_id = app_cache.get(app_name)
                         if not app_id:
-                            cur.execute('SELECT id FROM applications WHERE name = ?', (app_name,))
+                            cur.execute('SELECT id FROM applications WHERE division = ?', (app_name,))
                             r = cur.fetchone()
                             if r:
                                 app_id = r[0]
@@ -2595,9 +2925,49 @@ class AppTracker(tk.Tk):
                                         'security': security,
                                         'monetary': monetary,
                                         'customer_service': customer_service,
-                                        'notes': notes,
-                                        'category_id': database.ensure_category(category_name) if category_name else None
+                                        'notes': notes
                                     })
+                                    # Update categories many-to-many for existing app using local connection
+                                    try:
+                                        all_cats = sorted(app_category_accum.get(app_name, set()))
+                                        cat_ids = []
+                                        print(f"DEBUG: Updating categories for existing app {app_name}: {all_cats}")
+                                        
+                                        # First ensure all categories exist and get their IDs in a single transaction
+                                        cat_ids = []
+                                        for nm in all_cats:
+                                            nm_clean = nm.strip()
+                                            if not nm_clean:
+                                                continue
+                                            # Try to find existing category first
+                                            cur.execute('SELECT id FROM categories WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', (nm_clean,))
+                                            crow = cur.fetchone()
+                                            if crow:
+                                                cat_ids.append(crow[0])
+                                            else:
+                                                # Create new category
+                                                cur.execute('INSERT INTO categories (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)', (nm_clean,))
+                                                cat_ids.append(cur.lastrowid)
+                                        
+                                        # Update category links in same transaction
+                                        if cat_ids:
+                                            print(f"DEBUG: Setting {len(cat_ids)} categories for existing app {app_name} (ID: {app_id})")
+                                            # First remove old links
+                                            cur.execute('DELETE FROM application_categories WHERE app_id = ?', (app_id,))
+                                            # Add new links
+                                            for cid in cat_ids:
+                                                cur.execute('INSERT OR IGNORE INTO application_categories (app_id, category_id) VALUES (?, ?)', 
+                                                          (app_id, cid))
+                                            print(f"DEBUG: Successfully updated categories for app {app_name}")
+                                            # Ensure category link changes persist even if no integration row commits later
+                                            try:
+                                                conn.commit()
+                                            except Exception as e:
+                                                print(f"DEBUG: Commit failed after updating categories for {app_name}: {e}")
+                                    except Exception as e:
+                                        print(f"DEBUG: Failed linking categories to existing app {app_id}: {e}")
+                                        if isinstance(e, sqlite3.OperationalError) and 'database is locked' in str(e):
+                                            print("DEBUG: Database lock detected, will retry on next pass")
                                     updated_apps += 1
                                 except Exception:
                                     pass
@@ -2619,16 +2989,51 @@ class AppTracker(tk.Tk):
                                             # Direct SQL insert with our connection
                                             # Compute application risk using the standard formula
                                             app_risk = max(0, (10 - (score or 0)) * (criticality or 0))
-                                            now_iso = datetime.utcnow().isoformat()
-                                            cur.execute('''
-                                                INSERT INTO applications 
-                                                (name, vendor, score, need, criticality, installed, disaster_recovery, 
-                                                safety, security, monetary, customer_service, notes, risk_score, last_modified, category_id)
-                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                            ''', (app_name, vendor, score, need, criticality, installed, disaster_recovery,
-                                                safety, security, monetary, customer_service, notes, app_risk, now_iso,
-                                                database.ensure_category(category_name) if category_name else None))
+                                            from datetime import timezone as _tz
+                                            now_iso = datetime.now(_tz.utc).isoformat()
+                                            # Determine if legacy 'name' column exists; if so, populate it as well
+                                            try:
+                                                cur.execute("PRAGMA table_info(applications)")
+                                                cols = [r[1] for r in cur.fetchall()]
+                                            except Exception:
+                                                cols = []
+                                            if 'name' in cols:
+                                                cur.execute('''
+                                                    INSERT INTO applications 
+                                                    (division, name, vendor, score, need, criticality, installed, disaster_recovery, 
+                                                    safety, security, monetary, customer_service, notes, risk_score, last_modified, category_id)
+                                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                ''', (app_name, app_name, vendor, score, need, criticality, installed, disaster_recovery,
+                                                    safety, security, monetary, customer_service, notes, app_risk, now_iso,
+                                                    None))
+                                            else:
+                                                cur.execute('''
+                                                    INSERT INTO applications 
+                                                    (division, vendor, score, need, criticality, installed, disaster_recovery, 
+                                                    safety, security, monetary, customer_service, notes, risk_score, last_modified, category_id)
+                                                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                ''', (app_name, vendor, score, need, criticality, installed, disaster_recovery,
+                                                    safety, security, monetary, customer_service, notes, app_risk, now_iso,
+                                                    None))
                                             app_id = cur.lastrowid
+                                            # Apply all accumulated categories for new app
+                                            try:
+                                                all_cats = sorted(app_category_accum.get(app_name, set()))
+                                                for nm in all_cats:
+                                                    nm_clean = nm.strip()
+                                                    if not nm_clean:
+                                                        continue
+                                                    cur.execute('SELECT id FROM categories WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', (nm_clean,))
+                                                    crow = cur.fetchone()
+                                                    if crow:
+                                                        cid = crow[0]
+                                                    else:
+                                                        cur.execute('INSERT INTO categories (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)', (nm_clean,))
+                                                        cid = cur.lastrowid
+                                                    cur.execute('INSERT OR IGNORE INTO application_categories (app_id, category_id) VALUES (?, ?)', (app_id, cid))
+                                                conn.commit()
+                                            except Exception as e:
+                                                print(f"DEBUG: Failed linking categories to new app {app_id}: {e}")
                                             
                                             # Create business unit links if needed
                                             if dept_ids:
@@ -2648,6 +3053,40 @@ class AppTracker(tk.Tk):
                                                         except Exception as e:
                                                             errors.append(f"Failed to link app {app_name} to business unit: {e}")
                                             
+                                            # Apply accumulated categories for new app using local connection
+                                            try:
+                                                all_cats = sorted(app_category_accum.get(app_name, set()))
+                                                cat_ids = []
+                                                print(f"DEBUG: Setting initial categories for new app {app_name}: {all_cats}")
+                                                
+                                                # First ensure all categories exist and get their IDs
+                                                for nm in all_cats:
+                                                    nm_clean = nm.strip()
+                                                    if not nm_clean:
+                                                        continue
+                                                    cur.execute('SELECT id FROM categories WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', (nm_clean,))
+                                                    crow = cur.fetchone()
+                                                    if crow:
+                                                        cid = crow[0]
+                                                    else:
+                                                        cur.execute('INSERT INTO categories (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)', (nm_clean,))
+                                                        cid = cur.lastrowid
+                                                        conn.commit()  # Commit new category immediately
+                                                    cat_ids.append(cid)
+                                                
+                                                # Link categories in same transaction
+                                                if app_id is not None and cat_ids:  # Type safety check
+                                                    print(f"DEBUG: Setting categories for new app {app_name} (ID: {app_id}): {all_cats}")
+                                                    # First remove any existing links
+                                                    cur.execute('DELETE FROM application_categories WHERE app_id = ?', (app_id,))
+                                                    # Add new links
+                                                    for cid in cat_ids:
+                                                        cur.execute('INSERT OR IGNORE INTO application_categories (app_id, category_id) VALUES (?, ?)', 
+                                                                  (app_id, cid))
+                                                    print(f"DEBUG: Successfully linked categories for new app {app_name}")
+                                            except Exception as e:
+                                                print(f"DEBUG: Failed linking categories to new app {app_id}: {e}")
+                                            
                                             conn.commit()
                                             created_apps += 1
                                             app_cache[app_name] = app_id
@@ -2663,6 +3102,7 @@ class AppTracker(tk.Tk):
 
                         # Ensure business unit link exists (use current BU(s) or last seen BU(s) for this app)
                         eff_bu_names = bu_names if bu_names else app_bu_map.get(app_name, [])
+                        # Link business units if provided
                         if eff_bu_names and app_id:
                             try:
                                 for bn in eff_bu_names:
@@ -2681,36 +3121,36 @@ class AppTracker(tk.Tk):
                                 errors.append(f"Failed to link business unit(s) to app {app_name}: {e}")
                                 pass
 
-                            # If integration provided, insert it
-                            if int_name:
-                                print(f"DEBUG: Processing integration {int_name} for app {app_name} (ID: {app_id})")
-                                try:
-                                    # Calculate risk score using the standard formula before inserting
-                                    s = int_score if int_score is not None else 0
-                                    c = int_criticality or 0
-                                    risk_score = float(max(0, (10 - s) * c))
-                                        
-                                    print(f"DEBUG: Inserting integration with risk score {risk_score}")
-                                    # Insert new integration
-                                    cur.execute('''
-                                        INSERT INTO system_integrations 
-                                        (parent_app_id, name, vendor, score, need,
-                                         criticality, installed, disaster_recovery,
-                                         safety, security, monetary, customer_service,
-                                         notes, risk_score, last_modified)
-                                        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-                                    ''', (app_id, int_name, int_vendor, int_score or 0,
-                                         int_need or 0, int_criticality or 0, int_installed or 0,
-                                         int_dr or 0, int_safety or 0, int_security or 0,
-                                         int_monetary or 0, int_customer_service or 0,
-                                         '', risk_score, last_mod or datetime.now().isoformat()))
-                                    created_integrations += 1
-                                    conn.commit()
-                                    print(f"DEBUG: Successfully created integration {int_name}")
-                                except Exception as e:
-                                    print(f"DEBUG: Failed to create integration: {e}")
-                                    errors.append(f"Row {rownum}: Failed to create integration '{int_name}': {e}")
-                                    # Don't continue here - let the row processing complete
+                        # Insert integration regardless of BU presence (as long as we have an app and a name)
+                        if app_id and int_name:
+                            print(f"DEBUG: Processing integration {int_name} for app {app_name} (ID: {app_id})")
+                            try:
+                                # Calculate risk score using the standard formula before inserting
+                                s = int_score if int_score is not None else 0
+                                c = int_criticality or 0
+                                risk_score = float(max(0, (10 - s) * c))
+
+                                print(f"DEBUG: Inserting integration with risk score {risk_score}")
+                                # Insert new integration
+                                cur.execute('''
+                                    INSERT INTO system_integrations 
+                                    (parent_app_id, name, vendor, score, need,
+                                     criticality, installed, disaster_recovery,
+                                     safety, security, monetary, customer_service,
+                                     notes, risk_score, last_modified)
+                                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                ''', (app_id, int_name, int_vendor, int_score or 0,
+                                     int_need or 0, int_criticality or 0, int_installed or 0,
+                                     int_dr or 0, int_safety or 0, int_security or 0,
+                                     int_monetary or 0, int_customer_service or 0,
+                                     '', risk_score, last_mod or datetime.now().isoformat()))
+                                created_integrations += 1
+                                conn.commit()
+                                print(f"DEBUG: Successfully created integration {int_name}")
+                            except Exception as e:
+                                print(f"DEBUG: Failed to create integration: {e}")
+                                errors.append(f"Row {rownum}: Failed to create integration '{int_name}': {e}")
+                                # Don't continue here - let the row processing complete
                                     
                     except Exception as e:
                         errors.append(f"Row {rownum}: {e}")
@@ -2725,8 +3165,43 @@ class AppTracker(tk.Tk):
 
                 # Cleanup any blank applications created inadvertently
                 try:
+                    # Final reconciliation: ensure every application's category links reflect the full accumulated set
+                    # This guards against any mid-import failures or partial commits.
+                    for app_name, cat_set in app_category_accum.items():
+                        try:
+                            cur.execute('SELECT id FROM applications WHERE division = ?', (app_name,))
+                            r = cur.fetchone()
+                            if not r:
+                                continue
+                            app_id_final = r[0]
+                            all_cats = sorted(cat_set)
+                            # Resolve / create category ids
+                            cat_ids_final = []
+                            for nm in all_cats:
+                                nm_clean = nm.strip()
+                                if not nm_clean:
+                                    continue
+                                cur.execute('SELECT id FROM categories WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', (nm_clean,))
+                                crow = cur.fetchone()
+                                if crow:
+                                    cat_ids_final.append(crow[0])
+                                else:
+                                    cur.execute('INSERT INTO categories (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)', (nm_clean,))
+                                    cat_ids_final.append(cur.lastrowid)
+                            # Replace links only if we have categories
+                            if cat_ids_final:
+                                cur.execute('DELETE FROM application_categories WHERE app_id = ?', (app_id_final,))
+                                for cid in cat_ids_final:
+                                    cur.execute('INSERT OR IGNORE INTO application_categories (app_id, category_id) VALUES (?, ?)', (app_id_final, cid))
+                                print(f"DEBUG: Reconciled categories for {app_name}: {all_cats}")
+                        except Exception as rec_e:
+                            print(f"DEBUG: Reconciliation failed for {app_name}: {rec_e}")
+                    conn.commit()
+                except Exception as e:
+                    print(f"DEBUG: Final category reconciliation error: {e}")
+                try:
                     if conn and cur:
-                        cur.execute("DELETE FROM applications WHERE name IS NULL OR TRIM(name) = ''")
+                        cur.execute("DELETE FROM applications WHERE division IS NULL OR TRIM(division) = ''")
                         conn.commit()
                 except Exception:
                     pass
@@ -2767,6 +3242,17 @@ class AppTracker(tk.Tk):
         # store the temporary window on the instance so nested functions can access it
         def refresh_after_import():
             """Schedule refresh operations on the main thread"""
+            # Ensure any pending changes are committed before refreshing UI
+            conn = None
+            try:
+                conn = database.connect_db()
+                conn.commit()
+            except Exception as e:
+                print(f"DEBUG: Final commit before refresh failed: {e}")
+            finally:
+                if conn:
+                    conn.close()
+                    
             self.refresh_table()  # Refresh the main application table
             self.department_listbox.delete(0, 'end')  # Clear and refresh department listbox
             for dept_id, dept_name in self.get_departments():
@@ -2774,8 +3260,8 @@ class AppTracker(tk.Tk):
             # Refresh categories so new CSV categories appear immediately
             try:
                 self.populate_category_listbox()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"DEBUG: Error refreshing category listbox: {e}")
             
         try:
             self._import_progress_win = None

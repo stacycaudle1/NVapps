@@ -24,6 +24,10 @@ __all__ = [
     'get_category_name',
     'update_category',
     'delete_category',
+    'get_app_categories',
+    'link_app_to_categories',
+    'set_app_categories',
+    'clear_app_categories',
 ]
 
 def get_system_integrations(parent_app_id=None):
@@ -32,13 +36,13 @@ def get_system_integrations(parent_app_id=None):
     c = conn.cursor()
     try:
         if parent_app_id is not None:
-            c.execute('''SELECT i.*, a.name as parent_app_name
+            c.execute('''SELECT i.*, a.division as parent_app_name
                         FROM system_integrations i
                         LEFT JOIN applications a ON i.parent_app_id = a.id
                         WHERE i.parent_app_id = ?
                         ORDER BY i.name''', (parent_app_id,))
         else:
-            c.execute('''SELECT i.*, a.name as parent_app_name
+            c.execute('''SELECT i.*, a.division as parent_app_name
                         FROM system_integrations i
                         LEFT JOIN applications a ON i.parent_app_id = a.id
                         ORDER BY i.name''')
@@ -151,10 +155,19 @@ def initialize_database():
                 FOREIGN KEY(app_id) REFERENCES applications(id),
                 FOREIGN KEY(unit_id) REFERENCES business_units(id)
             )""")
+            # Many-to-many mapping for application categories
+            c.execute("""CREATE TABLE IF NOT EXISTS application_categories (
+                app_id INTEGER,
+                category_id INTEGER,
+                PRIMARY KEY (app_id, category_id),
+                FOREIGN KEY(app_id) REFERENCES applications(id),
+                FOREIGN KEY(category_id) REFERENCES categories(id)
+            )""")
             
+            # Applications table: prefer 'division' column (formerly 'name')
             c.execute("""CREATE TABLE IF NOT EXISTS applications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL,
+                division TEXT NOT NULL,
                 vendor TEXT,
                 score INTEGER DEFAULT 0,
                 need INTEGER DEFAULT 0,
@@ -171,9 +184,21 @@ def initialize_database():
                 last_modified TEXT
             )""")
 
-            # Migrate applications to include category_id if missing
+            # Migrate applications table to ensure 'division' and 'category_id' exist
             c.execute("PRAGMA table_info(applications)")
             app_cols = [col[1] for col in c.fetchall()]
+            # If legacy schema used 'name', add 'division' and backfill from 'name'
+            if 'division' not in app_cols:
+                try:
+                    c.execute('ALTER TABLE applications ADD COLUMN division TEXT')
+                    # Backfill division from name if present
+                    if 'name' in app_cols:
+                        try:
+                            c.execute("UPDATE applications SET division = name WHERE division IS NULL OR TRIM(division) = ''")
+                        except Exception:
+                            pass
+                except Exception as e:
+                    print(f"DEBUG: Could not add division to applications: {e}")
             if 'category_id' not in app_cols:
                 try:
                     c.execute('ALTER TABLE applications ADD COLUMN category_id INTEGER')
@@ -181,11 +206,24 @@ def initialize_database():
                     # If ALTER fails for some reason, log and continue
                     print(f"DEBUG: Could not add category_id to applications: {e}")
             
-            # Optional: create an index on category_id for faster lookups
+            # Optional: create indexes for faster lookups
             try:
                 c.execute('CREATE INDEX IF NOT EXISTS idx_applications_category ON applications(category_id)')
             except Exception:
                 pass
+            try:
+                c.execute('CREATE INDEX IF NOT EXISTS idx_applications_division ON applications(division)')
+            except Exception:
+                pass
+
+            # One-time migration: populate application_categories from existing category_id values
+            try:
+                c.execute('''
+                    INSERT OR IGNORE INTO application_categories (app_id, category_id)
+                    SELECT id, category_id FROM applications WHERE category_id IS NOT NULL
+                ''')
+            except Exception as e:
+                print(f"DEBUG: Migration of application_categories failed or not needed: {e}")
             
             c.execute("""CREATE TABLE IF NOT EXISTS system_integrations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -224,27 +262,49 @@ def initialize_database():
     if last_error:
         raise last_error
 
-def add_application(name, vendor, factors, dept_ids, notes=None):
-    """Add a new application with the given attributes."""
+def add_application(division, vendor, factors, dept_ids, notes=None):
+    """Add a new application (Division) with the given attributes."""
     conn = connect_db()
     c = conn.cursor()
     try:
+        # Detect if legacy 'name' column still exists (and may be NOT NULL)
+        c.execute("PRAGMA table_info(applications)")
+        app_cols = [row[1] for row in c.fetchall()]
+        has_legacy_name = 'name' in app_cols
         now = datetime.utcnow().isoformat()
-        c.execute('''INSERT INTO applications 
-                    (name, vendor, score, need, criticality, installed, disaster_recovery,
-                     safety, security, monetary, customer_service, notes, last_modified)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
-                 (name, vendor,
-                  factors.get('score', 0),
-                  factors.get('need', 0),
-                  factors.get('criticality', 0),
-                  factors.get('installed', 0),
-                  factors.get('disaster_recovery', 0),
-                  factors.get('safety', 0),
-                  factors.get('security', 0),
-                  factors.get('monetary', 0),
-                  factors.get('customer_service', 0),
-                  notes, now))
+        if has_legacy_name:
+            # Insert both division and legacy name for compatibility (legacy 'name' may be NOT NULL)
+            c.execute('''INSERT INTO applications 
+                        (division, name, vendor, score, need, criticality, installed, disaster_recovery,
+                         safety, security, monetary, customer_service, notes, last_modified)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                     (division, division, vendor,
+                      factors.get('score', 0),
+                      factors.get('need', 0),
+                      factors.get('criticality', 0),
+                      factors.get('installed', 0),
+                      factors.get('disaster_recovery', 0),
+                      factors.get('safety', 0),
+                      factors.get('security', 0),
+                      factors.get('monetary', 0),
+                      factors.get('customer_service', 0),
+                      notes, now))
+        else:
+            c.execute('''INSERT INTO applications 
+                        (division, vendor, score, need, criticality, installed, disaster_recovery,
+                         safety, security, monetary, customer_service, notes, last_modified)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)''',
+                     (division, vendor,
+                      factors.get('score', 0),
+                      factors.get('need', 0),
+                      factors.get('criticality', 0),
+                      factors.get('installed', 0),
+                      factors.get('disaster_recovery', 0),
+                      factors.get('safety', 0),
+                      factors.get('security', 0),
+                      factors.get('monetary', 0),
+                      factors.get('customer_service', 0),
+                      notes, now))
         app_id = c.lastrowid
         
         # Link to departments
@@ -467,7 +527,8 @@ def get_app_departments(app_id):
 def get_application(app_id):
     conn = connect_db()
     c = conn.cursor()
-    c.execute('''SELECT id, name, vendor, score, need, criticality, installed,
+    # Return division as 'name' for compatibility with existing GUI code
+    c.execute('''SELECT id, division AS name, vendor, score, need, criticality, installed,
                  disaster_recovery, safety, security, monetary, customer_service,
                  notes, risk_score, last_modified, category_id
                  FROM applications WHERE id = ?''', (app_id,))
@@ -478,7 +539,8 @@ def get_application(app_id):
 def update_application(app_id, fields: Dict[str, object]):
     if not fields:
         return
-    allowed = {'name', 'vendor', 'score', 'need', 'criticality', 'installed',
+    # Accept both 'division' and legacy 'name' and map to division
+    allowed = {'division', 'name', 'vendor', 'score', 'need', 'criticality', 'installed',
                'disaster_recovery', 'safety', 'security', 'monetary',
                'customer_service', 'notes', 'risk_score', 'category_id'}
     set_parts = []
@@ -486,11 +548,16 @@ def update_application(app_id, fields: Dict[str, object]):
     
     # normalize provided fields
     provided = {k.lower(): v for k, v in fields.items()}
+    # Map legacy 'name' to 'division'
+    if 'name' in provided and 'division' not in provided:
+        provided['division'] = provided['name']
     
-    for k, v in fields.items():
+    for k, v in provided.items():
         key = k.lower()
         if key in allowed:
-            set_parts.append(f"{key} = ?")
+            # Always write to 'division' for both 'division' and legacy 'name'
+            column = 'division' if key == 'name' else key
+            set_parts.append(f"{column} = ?")
             values.append(v)
     
     # If caller didn't include risk_score, compute it using current values and provided overrides
@@ -581,9 +648,14 @@ def delete_category(category_id: int):
     conn = connect_db()
     c = conn.cursor()
     try:
-        # Clear references from applications first
+        # Clear references from applications (legacy single link)
         try:
             c.execute('UPDATE applications SET category_id = NULL WHERE category_id = ?', (category_id,))
+        except Exception:
+            pass
+        # Clear references from application_categories (many-to-many)
+        try:
+            c.execute('DELETE FROM application_categories WHERE category_id = ?', (category_id,))
         except Exception:
             pass
         c.execute('DELETE FROM categories WHERE id = ?', (category_id,))
@@ -591,6 +663,112 @@ def delete_category(category_id: int):
         return c.rowcount > 0
     finally:
         conn.close()
+
+def get_app_categories(app_id: int):
+    """Return list of category names for an application, ordered by name."""
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        print(f"DEBUG: Getting categories for app_id {app_id}")  # Debug log
+        c.execute('''
+            SELECT c.name, ac.app_id, ac.category_id 
+            FROM categories c
+            JOIN application_categories ac ON c.id = ac.category_id
+            WHERE ac.app_id = ?
+            ORDER BY c.name
+        ''', (app_id,))
+        rows = c.fetchall()
+        print(f"DEBUG: Found {len(rows)} categories for app_id {app_id}")  # Debug log
+        for row in rows:
+            print(f"DEBUG: Category data for app {app_id}: name={row[0]}, app_id={row[1]}, cat_id={row[2]}")
+        return [row[0] for row in rows]
+    finally:
+        conn.close()
+
+def link_app_to_categories(app_id: int, category_ids):
+    """Link an application to multiple categories (insert-or-ignore)."""
+    if not category_ids:
+        return
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        for cid in category_ids:
+            if cid:
+                c.execute('INSERT OR IGNORE INTO application_categories (app_id, category_id) VALUES (?, ?)', (app_id, cid))
+        conn.commit()
+    finally:
+        conn.close()
+
+def clear_app_categories(app_id: int):
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        c.execute('DELETE FROM application_categories WHERE app_id = ?', (app_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+def set_app_categories(app_id: int, category_ids):
+    """Replace an application's category links with the provided set."""
+    max_retries = 5
+    retry_delay = 0.1  # Start with 100ms delay
+    last_error = None
+    
+    for attempt in range(max_retries):
+        conn = None
+        try:
+            conn = connect_db()
+            c = conn.cursor()
+            
+            # First get current categories for debug logging
+            c.execute('SELECT DISTINCT c.name FROM categories c JOIN application_categories ac ON c.id = ac.category_id WHERE ac.app_id = ?', (app_id,))
+            current_cats = [r[0] for r in c.fetchall()]
+            print(f"DEBUG: Current categories for app {app_id}: {current_cats}")
+            
+            # Clear all existing category links within a transaction
+            c.execute('BEGIN IMMEDIATE')  # Request immediate transaction to prevent locks
+            c.execute('DELETE FROM application_categories WHERE app_id = ?', (app_id,))
+            
+            # Add new category links
+            if category_ids:
+                print(f"DEBUG: Setting new category IDs for app {app_id}: {category_ids}")
+                for cid in category_ids:
+                    if cid:
+                        c.execute('INSERT OR IGNORE INTO application_categories (app_id, category_id) VALUES (?, ?)', (app_id, cid))
+            
+            # Commit all changes at once
+            conn.commit()
+            
+            # Log the new categories
+            c.execute('SELECT DISTINCT c.name FROM categories c JOIN application_categories ac ON c.id = ac.category_id WHERE ac.app_id = ?', (app_id,))
+            new_cats = [r[0] for r in c.fetchall()]
+            print(f"DEBUG: Successfully set new categories for app {app_id}: {new_cats}")
+            
+            # Success - return from the function
+            return
+            
+        except sqlite3.OperationalError as e:
+            last_error = e
+            if 'database is locked' in str(e) and attempt < max_retries - 1:
+                print(f"DEBUG: Database locked while setting categories for app {app_id}, retry {attempt + 1}")
+                if conn:
+                    try:
+                        conn.rollback()
+                    except Exception:
+                        pass
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                continue
+            raise
+        finally:
+            if conn:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+    
+    if last_error:
+        raise last_error
 
 def _to_int_safe(val, default=0):
     """Convert a value to int, with fallback to default."""

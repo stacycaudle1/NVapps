@@ -1,0 +1,51 @@
+name,vendor,business_unit,Category,score,need,criticality,installed,disasterrecovery,safety,security,monetary,customerservice,notes,integration_name,integration_vendor,integration_score,integration_need,integration_criticality,integration_installed,integration_dr,integration_safety,integration_security,integration_monetary,integration_customerservice,integration_risk,integration_last_modified
+IT HelpDesk,None,Technology,CLT TechHelp,7,0,7,0,0,0,0,0,0,None,City Technology Service Desk,Tech Vendor ,7,0,7,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT HelpDesk,None,Technology,CLT TechHelp,6,0,9,0,0,0,0,0,0,None,CLT TechHelp,Tech Vendor ,6,0,9,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT HelpDesk,None,Technology,CLT TechHelp,4,0,9,0,0,0,0,0,0,None,Personnel,Tech Vendor ,4,0,9,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT HelpDesk,None,Technology,CLT TechHelp,2,0,8,0,0,0,0,0,0,None,Phone (Call Express),Tech Vendor ,2,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT HelpDesk,None,Technology,CLT TechHelp,3,0,8,0,0,0,0,0,0,None,Ticket System (Cherwell),Tech Vendor ,3,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT HelpDesk,None,Technology,CLT TechHelp,4,0,8,0,0,0,0,0,0,None,Room/Space,Tech Vendor ,4,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT HelpDesk,None,Technology,CLT TechHelp,3,0,8,0,0,0,0,0,0,None,CLT Center,Tech Vendor ,3,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT HelpDesk,None,Technology,CLT TechHelp,5,0,8,0,0,0,0,0,0,None,A-North,Tech Vendor ,5,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT HelpDesk,None,Technology,CLT TechHelp,3,0,8,0,0,0,0,0,0,None,Baggage Claim,Tech Vendor ,3,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT HelpDesk,None,Technology,CLT TechHelp,4,0,8,0,0,0,0,0,0,None,Storage,Tech Vendor ,4,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT HelpDesk,None,Technology,CLT TechHelp,5,0,8,0,0,0,0,0,0,None,Documentation/How-To Articles/O&M Manuals (Sharepoint/Teams),Tech Vendor ,5,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT HelpDesk,None,Technology,CLT TechHelp,2,0,6,0,0,0,0,0,0,None,End-User Help Guides,Tech Vendor ,2,0,6,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT-PMO,9,0,8,0,0,0,0,0,0,None,IT-PMO (Work Otter),Tech Vendor ,9,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT-PMO,1,0,3,0,0,0,0,0,0,None,IT-PMO (Jira),Tech Vendor ,1,0,3,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT-PMO,8,0,8,0,0,0,0,0,0,None,IT-PMO (e-Builder),Tech Vendor ,8,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT,3,0,7,0,0,0,0,0,0,None,IT Commissioning/Project Auditing (TBD),Tech Vendor ,3,0,7,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT,7,0,10,0,0,0,0,0,0,None,Business Continuity in the Cloud (BCiC),Tech Vendor ,7,0,10,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT,5,0,6,0,0,0,0,0,0,None,IT Budgeting (Excel),Tech Vendor ,5,0,6,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT,3,0,7,0,0,0,0,0,0,None,IT Billing (e-Mail--->PROPworks),Tech Vendor ,3,0,7,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,6,0,5,0,0,0,0,0,0,None,Inventory Network Equipment (Excel/SiteEngine),Tech Vendor ,6,0,5,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,6,0,6,0,0,0,0,0,0,None,Inventory Wireless Access Points (Extreme Cloud XIQ),Tech Vendor ,6,0,6,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,2,0,3,0,0,0,0,0,0,None,Inventory Network Assets Monitoring (SolarWinds),Tech Vendor ,2,0,3,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,8,0,7,0,0,0,0,0,0,None,Inventory Vmware Servers ,Tech Vendor ,8,0,7,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,5,0,7,0,0,0,0,0,0,None,Inventory Excel Servers,Tech Vendor ,5,0,7,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,3,0,8,0,0,0,0,0,0,None,Inventory Desktops (Excel/Cherwell),Tech Vendor ,3,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,3,0,8,0,0,0,0,0,0,None,Inventory Laptops  (Excel/Cherwell),Tech Vendor ,3,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,3,0,7,0,0,0,0,0,0,None,Tablets Excel,Tech Vendor ,3,0,7,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,4,0,7,0,0,0,0,0,0,None,Tablets Verizon web page,Tech Vendor ,4,0,7,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,8,0,7,0,0,0,0,0,0,None,Tablets MDM AirWatch,Tech Vendor ,8,0,7,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,3,0,8,0,0,0,0,0,0,None,Smart Phones Excel,Tech Vendor ,3,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,4,0,8,0,0,0,0,0,0,None,Smart Phones Verizon web page,Tech Vendor ,4,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,2,0,8,0,0,0,0,0,0,None,Smart Phones AT&T First Net,Tech Vendor ,2,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,8,0,8,0,0,0,0,0,0,None,Smart Phones MDM AirWatch,Tech Vendor ,8,0,8,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,IT Inventory Asset Management,5,0,6,0,0,0,0,0,0,None,Desk Phone Numbers (Excel),Tech Vendor ,5,0,6,0,0,0,0,0,0,,2025-09-15T15:00:00
+IT Management Systems,None,Technology,Radios ,8,0,6,0,0,0,0,0,0,None,CommShop 360,Tech Vendor ,8,0,6,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,Radios ,2,0,8,0,0,0,0,0,0,None,Motorola Provisioning Manager,Tech Vendor ,2,0,8,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,Radios ,1,0,8,0,0,0,0,0,0,None,Antennae ,Tech Vendor ,1,0,8,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,Radios ,5,0,6,0,0,0,0,0,0,None,Patch Management (MECM),Tech Vendor ,5,0,6,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,Radios ,3,0,8,0,0,0,0,0,0,None,EVIDS (Excel),Tech Vendor ,3,0,8,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,Radios ,4,0,9,0,0,0,0,0,0,None,CCTV Cameras (Excel/AEGIS),Tech Vendor ,4,0,9,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,Radios ,2,0,6,0,0,0,0,0,0,None,Conference Room Gear (Excel),Tech Vendor ,2,0,6,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,Radios ,4,0,6,0,0,0,0,0,0,None,Multi-Function Printers/Fax Machines (Excel/Ricoh),Tech Vendor ,4,0,6,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,Radios ,8,0,7,0,0,0,0,0,0,None,IT Expiration Date Tracker (EXP via e-Builder),Tech Vendor ,8,0,7,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,IT Change Control,5,0,10,0,0,0,0,0,0,None,City-I&T Change Control (Cherwell),Tech Vendor ,5,0,10,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,IT Change Control,5,0,10,0,0,0,0,0,0,None,CLT-IT Change Control (Cherwell),Tech Vendor ,5,0,10,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,IT Workorders,5,0,8,0,0,0,0,0,0,None,Cherwell,Tech Vendor ,5,0,8,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,IT Workorders,5,0,8,0,0,0,0,0,0,None,SmartSheet,Tech Vendor ,5,0,8,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,IT Workorders,1,0,8,0,0,0,0,0,0,None,New WO System (potentially ServiceNow),Tech Vendor ,1,0,8,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,IT Workorders,4,0,8,0,0,0,0,0,0,None,IT Systems Architecture (Visio/Sharepoint),Tech Vendor ,4,0,8,0,0,0,0,0,0,,2025-09-16T15:00:00
+IT Management Systems,None,Technology,IT Workorders,4,0,9,0,0,0,0,0,0,None,IT Systems Roadmap (Excel---->TBD),Tech Vendor ,4,0,9,0,0,0,0,0,0,,2025-09-16T15:00:00
