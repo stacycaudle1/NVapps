@@ -874,22 +874,21 @@ class AppTracker(tk.Tk):
             conn = database.connect_db()
             c = conn.cursor()
             # Aggregate by business unit using average integration risk (system_integrations.risk_score)
-            c.execute('''SELECT bu.name, 
-                               a.name as division,
-                               bu.last_modified,
-                               COUNT(DISTINCT abu.app_id) as app_count,
-                               AVG(i.risk_score) as avg_integration_risk
-                     FROM business_units bu
-                     LEFT JOIN application_business_units abu ON bu.id = abu.unit_id
-                     LEFT JOIN applications a ON abu.app_id = a.id
-                     LEFT JOIN system_integrations i ON a.id = i.parent_app_id
-                     GROUP BY bu.id''')
+            c.execute('''SELECT bu.name AS business_unit,
+                                COUNT(DISTINCT i.id) AS app_count,
+                                AVG(i.risk_score) AS avg_integration_risk
+                         FROM business_units bu
+                         LEFT JOIN application_business_units abu ON bu.id = abu.unit_id
+                         LEFT JOIN applications a ON abu.app_id = a.id
+                         LEFT JOIN system_integrations i ON a.id = i.parent_app_id
+                         GROUP BY bu.id, bu.name
+                         ORDER BY bu.name ASC''')
             results = c.fetchall()
-            for bu_name, division, last_modified, count, avg_risk in results:
+            for bu_name, count, avg_risk in results:
                 if avg_risk is None or avg_risk < 1:
                     status = 'No Data'
-                    raw_values = (bu_name, division, last_modified)
-                    bu_tree.insert('', 'end', values=raw_values)
+                    raw_values = (bu_name, count, 0.0, status)
+                    bu_tree.insert('', 'end', values=bu_api['format'](raw_values))
                 else:
                     try:
                         avg = float(avg_risk)
@@ -902,20 +901,17 @@ class AppTracker(tk.Tk):
                         status = 'Med'
                     else:
                         status = 'Low'
-                    raw_values = (bu_name, division, last_modified)
+                    raw_values = (bu_name, count, avg, status)
+                    formatted = bu_api['format'](raw_values)
                     if tag:
-                        bu_tree.insert('', 'end', values=raw_values, tags=(tag,))
+                        bu_tree.insert('', 'end', values=formatted, tags=(tag,))
                     else:
-                        bu_tree.insert('', 'end', values=raw_values)
+                        bu_tree.insert('', 'end', values=formatted)
             # Configure row colors based on risk (do this once per refresh)
             bu_tree.tag_configure('red', background='#ffcccc')
             bu_tree.tag_configure('yellow', background='#fff2cc')
             bu_tree.tag_configure('green', background='#ccffcc')
             conn.close()
-            # Configure row colors based on risk
-            bu_tree.tag_configure('red', background='#ffcccc')
-            bu_tree.tag_configure('yellow', background='#fff2cc')
-            bu_tree.tag_configure('green', background='#ccffcc')
             # Zebra striping
             try:
                 bu_api['apply_zebra']()
@@ -2198,11 +2194,28 @@ class AppTracker(tk.Tk):
         conn = None
         cur = None
 
+        # Detect CSV delimiter (handles tab, comma, semicolon, pipe)
+        def _detect_delimiter(pth):
+            sample = ''
+            try:
+                with open(pth, 'r', encoding='utf-8') as f:
+                    sample = f.read(4096)
+                    sniffer = csv.Sniffer()
+                    # Use common delimiters; Sniffer expects a string of possible delimiters
+                    dialect = sniffer.sniff(sample, delimiters=",;\t|")
+                    return getattr(dialect, 'delimiter', ',')
+            except Exception:
+                if '\t' in sample:
+                    return '\t'
+                return ','
+
+        delim = _detect_delimiter(path)
+
         # First count total rows
         total_rows = 0
         try:
             with open(path, newline='', encoding='utf-8') as fh:
-                total_rows = sum(1 for _ in csv.DictReader(fh))
+                total_rows = sum(1 for _ in csv.DictReader(fh, delimiter=delim))
         except Exception as e:
             return {'error': f'Failed to count rows: {e}'}
 
@@ -2212,25 +2225,31 @@ class AppTracker(tk.Tk):
         
         # Debug: Print out header fields
         with open(path, newline='', encoding='utf-8') as fh:
-            reader = csv.DictReader(fh)
+            reader = csv.DictReader(fh, delimiter=delim)
             if reader.fieldnames:
                 print("DEBUG: CSV Headers:", reader.fieldnames)
         
         # Open file and process rows
         try:
             with open(path, newline='', encoding='utf-8') as fh:
-                reader = csv.DictReader(fh)
+                reader = csv.DictReader(fh, delimiter=delim)
                 if reader.fieldnames is None:
                     return {'error': 'CSV file has no header row.'}
                 # normalize header names - keep both normalized and original versions
+                import re
+                def _norm_key(s: str) -> str:
+                    try:
+                        return re.sub(r'[^a-z0-9]', '', str(s).strip().lower())
+                    except Exception:
+                        return ''
                 header_map = {}
                 for h in reader.fieldnames:
-                    normalized = h.strip().lower().replace(' ', '').replace('-', '').replace('_', '')
+                    normalized = _norm_key(h)
                     header_map[normalized] = h
-                    header_map[h.strip()] = h  # Also keep original version
+                    header_map[str(h).strip()] = h  # Also keep original version
 
                 # check presence of minimal columns - check both normalized and original
-                if not any(key in header_map for key in ['appname', 'app_name', 'name']):
+                if not any(key in header_map for key in ['appname', 'app_name', 'name', 'name'.replace('_','')]):
                     return {'error': 'CSV must include an App Name column (e.g., "app_name", "name", or "App Name").'}
 
                 # Create a new database connection for this thread with timeout and immediate mode
@@ -2244,22 +2263,23 @@ class AppTracker(tk.Tk):
                     if not name:
                         return None
                     try:
-                        # First try to find existing business unit
-                        cur.execute('SELECT id FROM business_units WHERE name = ?', (name,))
+                        # Normalize name: trim and collapse internal whitespace, case-insensitive match for lookup
+                        name_norm = ' '.join(str(name).split()).strip()
+                        # First try to find existing business unit (case/trim-insensitive)
+                        cur.execute('SELECT id FROM business_units WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', (name_norm,))
                         row = cur.fetchone()
                         if row:
                             return row[0]
-                        
                         # Create new business unit with retries
                         max_retries = 3
                         last_error = None
                         for retry in range(max_retries):
                             try:
-                                print(f"DEBUG: Attempting to create business unit: {name}")
-                                cur.execute('INSERT INTO business_units (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)', (name,))
+                                print(f"DEBUG: Attempting to create business unit: {name_norm}")
+                                cur.execute('INSERT INTO business_units (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)', (name_norm,))
                                 conn.commit()  # Commit immediately to prevent locks
                                 new_id = cur.lastrowid
-                                print(f"DEBUG: Created business unit {name} with ID {new_id}")
+                                print(f"DEBUG: Created business unit {name_norm} with ID {new_id}")
                                 return new_id
                             except sqlite3.OperationalError as e:
                                 last_error = e
@@ -2271,8 +2291,8 @@ class AppTracker(tk.Tk):
                             except sqlite3.IntegrityError as e:
                                 # In case of race condition where unit was created between select and insert
                                 if 'UNIQUE constraint failed' in str(e):
-                                    print(f"DEBUG: Business unit {name} already exists (race condition)")
-                                    cur.execute('SELECT id FROM business_units WHERE name = ?', (name,))
+                                    print(f"DEBUG: Business unit {name_norm} already exists (race condition)")
+                                    cur.execute('SELECT id FROM business_units WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', (name_norm,))
                                     row = cur.fetchone()
                                     if row:
                                         return row[0]
@@ -2298,27 +2318,49 @@ class AppTracker(tk.Tk):
                     except Exception:
                         return default
 
-                # cache for app name -> id
+                # cache for app name -> id, and remember last non-empty BU(s) per app
                 app_cache = {}
+                app_bu_map = {}
+
+                # helper to flexibly read a field by multiple key options using normalized header mapping
+                def get(*opts):
+                    for opt in opts:
+                        # Try exact match
+                        if opt in header_map:
+                            val = raw.get(header_map[opt])
+                            if val is not None:
+                                return val
+                        # Try normalized version
+                        nk = _norm_key(opt)
+                        if nk in header_map:
+                            val = raw.get(header_map[nk])
+                            if val is not None:
+                                return val
+                    return ''
+
+                # parse potentially multiple BU names from a field
+                def parse_bu_names(val: str):
+                    if val is None:
+                        return []
+                    # split on common delimiters
+                    parts = re.split(r'[;,/|]', str(val))
+                    names = []
+                    for p in parts:
+                        nm = ' '.join(p.split()).strip()
+                        if nm:
+                            names.append(nm)
+                    return names
 
                 for rownum, raw in enumerate(reader, start=2):
                     try:
                         # Map fields flexibly with normalized keys
-                        def get(*opts):
-                            # Try original and normalized versions of each option
-                            for opt in opts:
-                                # Try exact match first
-                                if opt in header_map and raw.get(header_map[opt]) is not None:
-                                    return raw[header_map[opt]]
-                                # Try normalized version
-                                normalized = opt.strip().lower().replace(' ', '').replace('-', '').replace('_', '')
-                                if normalized in header_map and raw.get(header_map[normalized]) is not None:
-                                    return raw[header_map[normalized]]
-                            return ''
-
                         app_name = get('name', 'app_name', 'App Name') or ''
                         vendor = get('vendor', 'Vendor') or ''
-                        bu_name = get('business_unit', 'businessunit', 'Business Unit') or ''
+                        # Accept multiple possible BU header names, including 'Business Unit / Division'
+                        bu_field_val = get('business_unit', 'businessunit', 'Business Unit', 'business_unit_division', 'businessunitdivision', 'Business Unit / Division', 'department', 'dept', 'bu') or ''
+                        bu_names = parse_bu_names(bu_field_val)
+                        if bu_names:
+                            app_bu_map[app_name] = bu_names
                         notes = get('notes', 'Notes') or ''
 
                         # Application rating fields
@@ -2386,16 +2428,24 @@ class AppTracker(tk.Tk):
                                     max_retries = 3
                                     for retry in range(max_retries):
                                         try:
-                                            bu_id = ensure_business_unit(bu_name) if bu_name else None
-                                            dept_ids = [bu_id] if bu_id else []
+                                            # Use current row BU(s) or last seen BU(s) for this app if present
+                                            eff_bu_names = bu_names if bu_names else app_bu_map.get(app_name, [])
+                                            dept_ids = []
+                                            for bn in eff_bu_names:
+                                                bu_id = ensure_business_unit(bn)
+                                                if bu_id and bu_id not in dept_ids:
+                                                    dept_ids.append(bu_id)
                                             # Direct SQL insert with our connection
+                                            # Compute application risk using the standard formula
+                                            app_risk = max(0, (10 - (score or 0)) * (criticality or 0))
+                                            now_iso = datetime.utcnow().isoformat()
                                             cur.execute('''
                                                 INSERT INTO applications 
                                                 (name, vendor, score, need, criticality, installed, disaster_recovery, 
-                                                safety, security, monetary, customer_service, notes)
-                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                safety, security, monetary, customer_service, notes, risk_score, last_modified)
+                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                             ''', (app_name, vendor, score, need, criticality, installed, disaster_recovery,
-                                                safety, security, monetary, customer_service, notes))
+                                                safety, security, monetary, customer_service, notes, app_risk, now_iso))
                                             app_id = cur.lastrowid
                                             
                                             # Create business unit links if needed
@@ -2429,36 +2479,34 @@ class AppTracker(tk.Tk):
                                     errors.append(f"Row {rownum}: Failed to create application '{app_name}': {e}")
                                     continue
 
-                        # Ensure business unit link exists
-                        if bu_name and app_id:
+                        # Ensure business unit link exists (use current BU(s) or last seen BU(s) for this app)
+                        eff_bu_names = bu_names if bu_names else app_bu_map.get(app_name, [])
+                        if eff_bu_names and app_id:
                             try:
-                                print(f"DEBUG: Ensuring business unit exists for app {app_name}: {bu_name}")
-                                bu_id = ensure_business_unit(bu_name)
-                                if bu_id:
-                                    print(f"DEBUG: Linking app {app_name} to business unit {bu_name} (ID: {bu_id})")
-                                    # Insert link if not exists
-                                    cur.execute('SELECT 1 FROM application_business_units WHERE app_id = ? AND unit_id = ?', (app_id, bu_id))
-                                    if not cur.fetchone():
-                                        cur.execute('INSERT INTO application_business_units (app_id, unit_id) VALUES (?, ?)', (app_id, bu_id))
-                                        conn.commit()  # Commit the link
-                                        print(f"DEBUG: Successfully linked app {app_name} to business unit {bu_name}")
+                                for bn in eff_bu_names:
+                                    print(f"DEBUG: Ensuring business unit exists for app {app_name}: {bn}")
+                                    bu_id = ensure_business_unit(bn)
+                                    if bu_id:
+                                        print(f"DEBUG: Linking app {app_name} to business unit {bn} (ID: {bu_id})")
+                                        # Insert link if not exists
+                                        cur.execute('SELECT 1 FROM application_business_units WHERE app_id = ? AND unit_id = ?', (app_id, bu_id))
+                                        if not cur.fetchone():
+                                            cur.execute('INSERT INTO application_business_units (app_id, unit_id) VALUES (?, ?)', (app_id, bu_id))
+                                            conn.commit()  # Commit the link
+                                            print(f"DEBUG: Successfully linked app {app_name} to business unit {bn}")
                             except Exception as e:
-                                print(f"DEBUG: Failed to link business unit {bu_name} to app {app_name}: {e}")
-                                errors.append(f"Failed to link business unit {bu_name} to app {app_name}: {e}")
+                                print(f"DEBUG: Failed to link business unit(s) to app {app_name}: {e}")
+                                errors.append(f"Failed to link business unit(s) to app {app_name}: {e}")
                                 pass
 
                             # If integration provided, insert it
                             if int_name:
                                 print(f"DEBUG: Processing integration {int_name} for app {app_name} (ID: {app_id})")
                                 try:
-                                    # Calculate risk score
-                                    numeric_vals = [int_score or 0, int_need, int_criticality, int_installed, 
-                                                  int_dr, int_safety, int_security, int_monetary, 
-                                                  int_customer_service]
-                                    try:
-                                        risk_score = sum(v or 0 for v in numeric_vals) / len(numeric_vals)
-                                    except Exception:
-                                        risk_score = 0.0
+                                    # Calculate risk score using the standard formula before inserting
+                                    s = int_score if int_score is not None else 0
+                                    c = int_criticality or 0
+                                    risk_score = float(max(0, (10 - s) * c))
                                         
                                     print(f"DEBUG: Inserting integration with risk score {risk_score}")
                                     # Insert new integration
