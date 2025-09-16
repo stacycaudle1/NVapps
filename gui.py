@@ -12,6 +12,9 @@ WIN_BG = '#f6f9fc'       # window background
 HEADER_BG = '#2b579a'    # header background
 HEADER_FG = 'white'      # header foreground
 
+# Verbose logging toggle (set True for detailed console debug output)
+VERBOSE_LOG = False
+
 
 def get_risk_color(score):
     """Map numeric risk score to color tags using new bands:
@@ -68,15 +71,19 @@ class AppTracker(tk.Tk):
             conn_schema.commit()
             conn_schema.close()
         except Exception as e:
-            print(f"DEBUG: Failed to ensure integration_categories table exists: {e}")
+            if VERBOSE_LOG:
+                print(f"DEBUG: Failed to ensure integration_categories table exists: {e}")
         self.create_widgets()
         # Populate the department listbox after creating widgets
-        print("DEBUG: Initializing departments")  # Debug log
+        if VERBOSE_LOG:
+            print("DEBUG: Initializing departments")
         departments = self.get_departments()
-        print(f"DEBUG: Got departments: {departments}")  # Debug log
+        if VERBOSE_LOG:
+            print(f"DEBUG: Got departments: {departments}")
         self.department_listbox.delete(0, 'end')
         for dept_id, dept_name in departments:
-            print(f"DEBUG: Inserting department: {dept_name}")  # Debug log
+            if VERBOSE_LOG:
+                print(f"DEBUG: Inserting department: {dept_name}")
             self.department_listbox.insert('end', dept_name)
         # Populate categories listbox
         try:
@@ -144,7 +151,8 @@ class AppTracker(tk.Tk):
         c.execute('SELECT id, name FROM business_units ORDER BY name ASC')
         departments = c.fetchall()
         conn.close()
-        print(f"DEBUG: Retrieved business units: {departments}")  # Debugging log
+        if VERBOSE_LOG:
+            print(f"DEBUG: Retrieved business units: {departments}")  # Debugging log
         return departments
 
     def get_categories(self):
@@ -163,7 +171,8 @@ class AppTracker(tk.Tk):
                     pass
             return result
         except Exception as e:
-            print(f"DEBUG: Failed to get categories: {e}")
+            if VERBOSE_LOG:
+                print(f"DEBUG: Failed to get categories: {e}")
             return []
 
     def populate_category_listbox(self):
@@ -173,6 +182,8 @@ class AppTracker(tk.Tk):
         try:
             self.category_listbox.delete(0, 'end')
             for cid, cname in self.get_categories():
+                if VERBOSE_LOG:
+                    print(f"DEBUG: Inserting category: {cname}")
                 self.category_listbox.insert('end', cname)
         except Exception:
             pass
@@ -193,6 +204,8 @@ class AppTracker(tk.Tk):
                 self.populate_category_listbox()
                 popup.destroy()
             except Exception as e:
+                if VERBOSE_LOG:
+                    print(f"DEBUG: Failed to add category: {e}")
                 messagebox.showerror('Error', f'Failed to add category: {e}')
 
         ttk.Button(popup, text='Add', command=add_cat, style='Primary.TButton').pack(padx=10, pady=10)
