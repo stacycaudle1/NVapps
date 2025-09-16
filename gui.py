@@ -37,7 +37,7 @@ def get_risk_color(score):
 class AppTracker(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('Business Application Tracker')
+        self.title('NVApps - Business Application Tracker')
         self.geometry('1000x700')
         self.minsize(900, 500)
         # Open the application in full-screen mode
@@ -1932,12 +1932,16 @@ class AppTracker(tk.Tk):
                 # Business unit(s)
                 depts = database.get_app_departments(self.selected_app_id)
                 business_unit = ', '.join(depts)
-                if system_name and business_unit:
-                    self.integrations_title.configure(text=f"System Sub/Integrations - {system_name} - {business_unit}")
-                elif system_name:
-                    self.integrations_title.configure(text=f"System Sub/Integrations - {system_name}")
-                else:
-                    self.integrations_title.configure(text="System Sub/Integrations")
+                # Build dynamic title parts
+                title_parts = ["System Sub/Integrations"]
+                if system_name:
+                    title_parts.append(system_name)
+                if business_unit:
+                    title_parts.append(business_unit)
+                # Append category (distinct from business unit) if selected
+                if self.selected_category_name:
+                    title_parts.append(self.selected_category_name)
+                self.integrations_title.configure(text=" - ".join(title_parts))
             except Exception:
                 self.selected_app_id = None
                 self.current_parent_system_id = None

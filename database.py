@@ -244,6 +244,23 @@ def initialize_database():
                 last_modified TEXT,
                 FOREIGN KEY(parent_app_id) REFERENCES applications(id)
             )""")
+
+            # Many-to-many mapping for integration categories (added for per-row integration category linkage)
+            c.execute("""CREATE TABLE IF NOT EXISTS integration_categories (
+                integration_id INTEGER NOT NULL,
+                category_id INTEGER NOT NULL,
+                PRIMARY KEY (integration_id, category_id),
+                FOREIGN KEY (integration_id) REFERENCES system_integrations(id) ON DELETE CASCADE,
+                FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+            )""")
+            try:
+                c.execute('CREATE INDEX IF NOT EXISTS idx_integration_categories_integration ON integration_categories(integration_id)')
+            except Exception:
+                pass
+            try:
+                c.execute('CREATE INDEX IF NOT EXISTS idx_integration_categories_category ON integration_categories(category_id)')
+            except Exception:
+                pass
             
             conn.commit()
             conn.close()
