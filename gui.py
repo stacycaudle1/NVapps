@@ -54,6 +54,21 @@ class AppTracker(tk.Tk):
         self.search_type_var = None
         self.search_after_id = None  # For delayed search
         database.initialize_database()  # Ensure DB schema is correct before anything else
+        # Ensure integration_categories join table exists for category-specific integration filtering
+        try:
+            conn_schema = database.connect_db()
+            cur_schema = conn_schema.cursor()
+            cur_schema.execute('''CREATE TABLE IF NOT EXISTS integration_categories (
+                integration_id INTEGER NOT NULL,
+                category_id INTEGER NOT NULL,
+                PRIMARY KEY (integration_id, category_id),
+                FOREIGN KEY (integration_id) REFERENCES system_integrations(id) ON DELETE CASCADE,
+                FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+            )''')
+            conn_schema.commit()
+            conn_schema.close()
+        except Exception as e:
+            print(f"DEBUG: Failed to ensure integration_categories table exists: {e}")
         self.create_widgets()
         # Populate the department listbox after creating widgets
         print("DEBUG: Initializing departments")  # Debug log
@@ -1797,7 +1812,9 @@ class AppTracker(tk.Tk):
             avg_map = {}
 
         c.execute('''SELECT id, division AS name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, notes, risk_score, last_modified, category_id FROM applications''')
-        rows = []
+        rows = []  # will hold tuples of ((dept, division, category, last_mod), app_id, risk_score, category_name)
+        # cache categories per app to avoid extra connections per category
+        app_categories_cache = {}
         for app_row in c.fetchall():
             # Determine app id reliably
             try:
@@ -1825,67 +1842,55 @@ class AppTracker(tk.Tk):
             except Exception:
                 division = app_row[1]
 
-            # Category: get and display joined category names (many-to-many) and last modified date
-            conn_cat = None
+            # Categories & last modified: single query using shared connection
             try:
-                # Get categories and last modified date in one transaction
-                conn_cat = database.connect_db()  # Get fresh connection to avoid stale data
-                cur_cat = conn_cat.cursor()
-                
-                # Get categories
-                cur_cat.execute('''
-                    SELECT DISTINCT c.name
-                    FROM categories c
-                    JOIN application_categories ac ON c.id = ac.category_id
-                    WHERE ac.app_id = ?
-                    ORDER BY c.name
-                ''', (app_id,))
-                names = [row[0] for row in cur_cat.fetchall()]
-                if names:
-                    category_display = ', '.join(names)
-                    print(f"DEBUG: App {app_id} ({division}) categories: {category_display}")
-                else:
-                    print(f"DEBUG: No categories found for app {app_id} ({division})")
-
-                # Get the most recent last modified date from integrations
-                cur_cat.execute('''
-                    SELECT MAX(last_modified) 
-                    FROM system_integrations 
-                    WHERE parent_app_id = ?
-                ''', (app_id,))
-                last_mod_result = cur_cat.fetchone()
-                if last_mod_result and last_mod_result[0]:
-                    last_mod = str(last_mod_result[0]).split('.')[0]  # Remove microseconds if present
-                    if 'T' in last_mod:  # Handle ISO format
+                if app_id not in app_categories_cache:
+                    c.execute('''
+                        SELECT DISTINCT c.name
+                        FROM categories c
+                        JOIN application_categories ac ON c.id = ac.category_id
+                        WHERE ac.app_id = ?
+                        ORDER BY c.name
+                    ''', (app_id,))
+                    app_categories_cache[app_id] = [r[0] for r in c.fetchall()]
+                category_list = app_categories_cache.get(app_id, [])
+                # Get max last_modified from integrations for this app
+                c.execute('SELECT MAX(last_modified) FROM system_integrations WHERE parent_app_id = ?', (app_id,))
+                lm_row = c.fetchone()
+                if lm_row and lm_row[0]:
+                    last_mod = str(lm_row[0]).split('.')[0]
+                    if 'T' in last_mod:
                         last_mod = last_mod.replace('T', ' ')
-
+                else:
+                    last_mod = ''
             except Exception as e:
-                print(f"DEBUG: Error getting categories/last modified for app {app_id}: {e}")
-                category_display = ''
+                print(f"DEBUG: Error retrieving categories for app {app_id}: {e}")
+                category_list = []
                 last_mod = ''
-            finally:
-                if conn_cat:
-                    conn_cat.close()            # User requested Business Unit first, then Division
-            # Create the row with the last_mod from our fresh query instead of the stale data
-            row = (dept_str, division, category_display, last_mod)
 
-            # Apply search filtering
-            if search_text:
-                if search_type == "Division" and search_text.lower() not in (division or '').lower():
-                    continue
-                elif search_type == "Business Unit" and not any(search_text.lower() in dept.lower() for dept in depts):
-                    continue
+            # If no categories, still show a row with blank category so app not hidden
+            if not category_list:
+                category_list = ['']
 
-            rows.append((row, app_id, risk_score))
+            for cat_name in category_list:
+                row = (dept_str, division, cat_name, last_mod)
+                # Apply search filtering per row
+                if search_text:
+                    if search_type == "Division" and search_text.lower() not in (division or '').lower():
+                        continue
+                    elif search_type == "Business Unit" and not any(search_text.lower() in dept.lower() for dept in depts):
+                        continue
+                rows.append((row, app_id, risk_score, cat_name))
         # Sort rows by the 'Business Unit' column (index 0)
-        rows.sort(key=lambda x: (x[0][0] or '').lower())
-        for row, app_id, risk_score in rows:
+        rows.sort(key=lambda x: ((x[0][0] or '').lower(), (x[0][2] or '').lower()))
+        for row, app_id, risk_score, cat_name in rows:
             color = get_risk_color(risk_score)
-            # store the app id as the item iid so we can identify it later
+            # Composite iid: appId:category (category may be empty string)
+            composite_iid = f"{app_id}:{cat_name}" if cat_name is not None else f"{app_id}:"
             if color:
-                self.tree.insert('', 'end', iid=str(app_id), values=row, tags=(color,))
+                self.tree.insert('', 'end', iid=composite_iid, values=row, tags=(color,))
             else:
-                self.tree.insert('', 'end', iid=str(app_id), values=row)
+                self.tree.insert('', 'end', iid=composite_iid, values=row)
         self.tree.tag_configure('red', background='#ffcccc')
         self.tree.tag_configure('yellow', background='#fff2cc')
         self.tree.tag_configure('green', background='#ccffcc')
@@ -1901,14 +1906,20 @@ class AppTracker(tk.Tk):
                 self.details_text.delete('1.0', 'end')
                 self.details_text.configure(state='disabled')
                 self.current_parent_system_id = None
+                self.selected_app_id = None
+                self.selected_category_name = None
                 self.refresh_integration_table()
                 return
                 
             item = sel[0]
-            
-            # store selected app id (we set iid to app id when inserting)
+            # Composite iid format: appId:category
             try:
-                self.selected_app_id = int(item)
+                if ':' in item:
+                    app_part, category_part = item.split(':', 1)
+                else:
+                    app_part, category_part = item, ''
+                self.selected_app_id = int(app_part)
+                self.selected_category_name = category_part if category_part else None
                 # Set current parent system id for integrations
                 self.current_parent_system_id = self.selected_app_id
                 
@@ -3125,6 +3136,7 @@ class AppTracker(tk.Tk):
                         if app_id and int_name:
                             print(f"DEBUG: Processing integration {int_name} for app {app_name} (ID: {app_id})")
                             try:
+                                cat_ids_for_app = []  # ensure defined for later debug logging
                                 # Calculate risk score using the standard formula before inserting
                                 s = int_score if int_score is not None else 0
                                 c = int_criticality or 0
@@ -3144,9 +3156,59 @@ class AppTracker(tk.Tk):
                                      int_dr or 0, int_safety or 0, int_security or 0,
                                      int_monetary or 0, int_customer_service or 0,
                                      '', risk_score, last_mod or datetime.now().isoformat()))
+                                integration_id = cur.lastrowid
                                 created_integrations += 1
+
+                                # Determine row-specific categories (only those explicitly present on this row)
+                                row_categories = []
+                                if main_category:
+                                    row_categories.extend(parse_category_names(main_category))
+                                if int_category:
+                                    row_categories.extend(parse_category_names(int_category))
+                                # Normalize & deduplicate row categories
+                                row_categories_norm = []
+                                seen_cat = set()
+                                for rc in row_categories:
+                                    rc_clean = rc.strip()
+                                    if not rc_clean:
+                                        continue
+                                    key = rc_clean.lower()
+                                    if key not in seen_cat:
+                                        seen_cat.add(key)
+                                        row_categories_norm.append(rc_clean)
+
+                                # Link integration ONLY to row-specific categories
+                                try:
+                                    # Ensure join table exists
+                                    cur.execute('''CREATE TABLE IF NOT EXISTS integration_categories (
+                                        integration_id INTEGER NOT NULL,
+                                        category_id INTEGER NOT NULL,
+                                        PRIMARY KEY (integration_id, category_id),
+                                        FOREIGN KEY (integration_id) REFERENCES system_integrations(id) ON DELETE CASCADE,
+                                        FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+                                    )''')
+                                    linked_cat_ids = []
+                                    if row_categories_norm:
+                                        for cat_name in row_categories_norm:
+                                            try:
+                                                cur.execute('SELECT id FROM categories WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', (cat_name,))
+                                                c_row = cur.fetchone()
+                                                if c_row:
+                                                    cid = c_row[0]
+                                                else:
+                                                    # Create category if somehow not present yet
+                                                    cur.execute('INSERT INTO categories (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)', (cat_name,))
+                                                    cid = cur.lastrowid
+                                                linked_cat_ids.append(cid)
+                                                cur.execute('INSERT OR IGNORE INTO integration_categories (integration_id, category_id) VALUES (?, ?)', (integration_id, cid))
+                                            except Exception as ic_e:
+                                                print(f"DEBUG: Failed linking integration {integration_id} to category '{cat_name}': {ic_e}")
+                                    else:
+                                        print(f"DEBUG: No row-specific categories for integration {integration_id} ({int_name}); leaving unlinked.")
+                                except Exception as link_e:
+                                    print(f"DEBUG: Failed to create/link integration categories: {link_e}")
                                 conn.commit()
-                                print(f"DEBUG: Successfully created integration {int_name}")
+                                print(f"DEBUG: Successfully created integration {int_name} with ID {integration_id} and linked to row categories {row_categories_norm}")
                             except Exception as e:
                                 print(f"DEBUG: Failed to create integration: {e}")
                                 errors.append(f"Row {rownum}: Failed to create integration '{int_name}': {e}")
@@ -3557,7 +3619,32 @@ class AppTracker(tk.Tk):
             return
             
         try:
-            integrations = database.get_system_integrations(parent_id)
+            selected_cat = getattr(self, 'selected_category_name', None)
+            # Strict mode: if no category selected, show nothing
+            if not selected_cat:
+                return
+            conn = database.connect_db()
+            cur = conn.cursor()
+            integrations = []
+            try:
+                cur.execute('''CREATE TABLE IF NOT EXISTS integration_categories (
+                    integration_id INTEGER NOT NULL,
+                    category_id INTEGER NOT NULL,
+                    PRIMARY KEY (integration_id, category_id),
+                    FOREIGN KEY (integration_id) REFERENCES system_integrations(id) ON DELETE CASCADE,
+                    FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+                )''')
+                cur.execute('''
+                    SELECT si.* FROM system_integrations si
+                    JOIN integration_categories ic ON si.id = ic.integration_id
+                    JOIN categories c ON ic.category_id = c.id
+                    WHERE si.parent_app_id = ? AND LOWER(TRIM(c.name)) = LOWER(TRIM(?))
+                    ORDER BY si.name
+                ''', (parent_id, selected_cat))
+                integrations = cur.fetchall()
+            except Exception as fe:
+                print(f"DEBUG: Strict category-filtered integration query failed: {fe}")
+            conn.close()
             
             for row in integrations:
                 if not row:
