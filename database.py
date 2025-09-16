@@ -19,6 +19,11 @@ __all__ = [
     'get_application',
     'update_application',
     'generate_smoke_test_data',
+    'get_categories',
+    'ensure_category',
+    'get_category_name',
+    'update_category',
+    'delete_category',
 ]
 
 def get_system_integrations(parent_app_id=None):
@@ -131,6 +136,13 @@ def initialize_database():
                 c.execute("DROP TABLE business_units")
                 c.execute("ALTER TABLE business_units_new RENAME TO business_units")
             
+            # Categories table (new)
+            c.execute("""CREATE TABLE IF NOT EXISTS categories (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""")
+
             # Create other required tables
             c.execute("""CREATE TABLE IF NOT EXISTS application_business_units (
                 app_id INTEGER,
@@ -158,6 +170,22 @@ def initialize_database():
                 risk_score REAL,
                 last_modified TEXT
             )""")
+
+            # Migrate applications to include category_id if missing
+            c.execute("PRAGMA table_info(applications)")
+            app_cols = [col[1] for col in c.fetchall()]
+            if 'category_id' not in app_cols:
+                try:
+                    c.execute('ALTER TABLE applications ADD COLUMN category_id INTEGER')
+                except Exception as e:
+                    # If ALTER fails for some reason, log and continue
+                    print(f"DEBUG: Could not add category_id to applications: {e}")
+            
+            # Optional: create an index on category_id for faster lookups
+            try:
+                c.execute('CREATE INDEX IF NOT EXISTS idx_applications_category ON applications(category_id)')
+            except Exception:
+                pass
             
             c.execute("""CREATE TABLE IF NOT EXISTS system_integrations (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -441,7 +469,7 @@ def get_application(app_id):
     c = conn.cursor()
     c.execute('''SELECT id, name, vendor, score, need, criticality, installed,
                  disaster_recovery, safety, security, monetary, customer_service,
-                 notes, risk_score, last_modified
+                 notes, risk_score, last_modified, category_id
                  FROM applications WHERE id = ?''', (app_id,))
     row = c.fetchone()
     conn.close()
@@ -452,7 +480,7 @@ def update_application(app_id, fields: Dict[str, object]):
         return
     allowed = {'name', 'vendor', 'score', 'need', 'criticality', 'installed',
                'disaster_recovery', 'safety', 'security', 'monetary',
-               'customer_service', 'notes', 'risk_score'}
+               'customer_service', 'notes', 'risk_score', 'category_id'}
     set_parts = []
     values = []
     
@@ -494,6 +522,74 @@ def update_application(app_id, fields: Dict[str, object]):
         c.execute(f'''UPDATE applications SET {', '.join(set_parts)}
                      WHERE id = ?''', values)
         conn.commit()
+        conn.close()
+
+def get_categories():
+    """Return list of all categories as (id, name)."""
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        c.execute('SELECT id, name FROM categories ORDER BY name')
+        return c.fetchall()
+    finally:
+        conn.close()
+
+def ensure_category(name: str):
+    """Find or create a category by name. Returns its id or None if name is empty."""
+    if not name:
+        return None
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        nm = str(name).strip()
+        c.execute('SELECT id FROM categories WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', (nm,))
+        row = c.fetchone()
+        if row:
+            return row[0]
+        c.execute('INSERT INTO categories (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)', (nm,))
+        conn.commit()
+        return c.lastrowid
+    finally:
+        conn.close()
+
+def get_category_name(category_id: int):
+    """Return category name for given id, or None."""
+    if not category_id:
+        return None
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        c.execute('SELECT name FROM categories WHERE id = ?', (category_id,))
+        r = c.fetchone()
+        return r[0] if r else None
+    finally:
+        conn.close()
+
+def update_category(category_id: int, new_name: str):
+    """Rename a category."""
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        c.execute('UPDATE categories SET name = ?, last_modified = CURRENT_TIMESTAMP WHERE id = ?', (new_name, category_id))
+        conn.commit()
+        return c.rowcount > 0
+    finally:
+        conn.close()
+
+def delete_category(category_id: int):
+    """Delete a category and clear references from applications."""
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        # Clear references from applications first
+        try:
+            c.execute('UPDATE applications SET category_id = NULL WHERE category_id = ?', (category_id,))
+        except Exception:
+            pass
+        c.execute('DELETE FROM categories WHERE id = ?', (category_id,))
+        conn.commit()
+        return c.rowcount > 0
+    finally:
         conn.close()
 
 def _to_int_safe(val, default=0):

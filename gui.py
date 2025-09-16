@@ -1,5 +1,5 @@
 import tkinter as tk
-from tkinter import ttk, messagebox
+from tkinter import ttk, messagebox, simpledialog
 from datetime import datetime
 import database
 import matplotlib.pyplot as plt
@@ -63,6 +63,11 @@ class AppTracker(tk.Tk):
         for dept_id, dept_name in departments:
             print(f"DEBUG: Inserting department: {dept_name}")  # Debug log
             self.department_listbox.insert('end', dept_name)
+        # Populate categories listbox
+        try:
+            self.populate_category_listbox()
+        except Exception:
+            pass
         self.refresh_table()
 
     def setup_style(self):
@@ -126,6 +131,109 @@ class AppTracker(tk.Tk):
         conn.close()
         print(f"DEBUG: Retrieved business units: {departments}")  # Debugging log
         return departments
+
+    def get_categories(self):
+        """Get all categories from the database"""
+        try:
+            cats = database.get_categories()
+            # Normalize to list of tuples (id, name)
+            result = []
+            for row in cats:
+                try:
+                    if hasattr(row, 'keys'):
+                        result.append((row['id'], row['name']))
+                    else:
+                        result.append((row[0], row[1]))
+                except Exception:
+                    pass
+            return result
+        except Exception as e:
+            print(f"DEBUG: Failed to get categories: {e}")
+            return []
+
+    def populate_category_listbox(self):
+        """Refresh the category listbox items from DB."""
+        if not hasattr(self, 'category_listbox') or self.category_listbox is None:
+            return
+        try:
+            self.category_listbox.delete(0, 'end')
+            for cid, cname in self.get_categories():
+                self.category_listbox.insert('end', cname)
+        except Exception:
+            pass
+
+    def add_category_popup(self):
+        popup = tk.Toplevel(self)
+        popup.title('Add Category')
+        ttk.Label(popup, text='Category:').pack(padx=10, pady=5)
+        entry = ttk.Entry(popup)
+        entry.pack(padx=10, pady=5)
+
+        def add_cat():
+            name = entry.get().strip()
+            if not name:
+                return
+            try:
+                database.ensure_category(name)
+                self.populate_category_listbox()
+                popup.destroy()
+            except Exception as e:
+                messagebox.showerror('Error', f'Failed to add category: {e}')
+
+        ttk.Button(popup, text='Add', command=add_cat, style='Primary.TButton').pack(padx=10, pady=10)
+
+    def manage_categories_popup(self):
+        popup = tk.Toplevel(self)
+        popup.title('Manage Categories')
+        listbox = tk.Listbox(popup, selectmode='browse', exportselection=0)
+        cats = self.get_categories()
+        for _, cname in cats:
+            listbox.insert('end', cname)
+        listbox.pack(padx=10, pady=10)
+
+        def get_selected_category_id():
+            sel = listbox.curselection()
+            if not sel:
+                return None
+            idx = sel[0]
+            try:
+                cid = cats[idx][0]
+                return cid
+            except Exception:
+                return None
+
+        def delete_selected():
+            cid = get_selected_category_id()
+            if not cid:
+                return
+            if not messagebox.askyesno('Confirm Delete', 'Delete selected category? Applications will have no category set.'):
+                return
+            try:
+                database.delete_category(cid)
+                # refresh both listboxes
+                self.populate_category_listbox()
+                popup.destroy()
+            except Exception as e:
+                messagebox.showerror('Error', f'Failed to delete category: {e}')
+
+        def rename_selected():
+            cid = get_selected_category_id()
+            if not cid:
+                return
+            new = simpledialog.askstring('Rename Category', 'New name:')
+            if not new:
+                return
+            try:
+                database.update_category(cid, new.strip())
+                self.populate_category_listbox()
+                popup.destroy()
+            except Exception as e:
+                messagebox.showerror('Error', f'Failed to rename category: {e}')
+
+        btns = ttk.Frame(popup)
+        btns.pack(padx=10, pady=10, fill='x')
+        ttk.Button(btns, text='Rename', command=rename_selected, style='Primary.TButton').pack(side='left', padx=5)
+        ttk.Button(btns, text='Delete', command=delete_selected, style='Danger.TButton').pack(side='left', padx=5)
 
     def add_department_popup(self):
         popup = tk.Toplevel(self)
@@ -1143,6 +1251,27 @@ class AppTracker(tk.Tk):
         self.name_entry = ttk.Entry(form_frame)
         self.name_entry.grid(row=6, column=1, sticky='ew', padx=(0, padx), pady=pady)
 
+        # Category selection section under Enter Division
+        cat_header = tk.Label(form_frame, text="Select Category:", **self.category_style)
+        cat_header.grid(row=7, column=0, columnspan=2, sticky='nw', padx=padx, pady=(10, 2))
+
+        cat_buttons_frame = ttk.Frame(form_frame)
+        cat_buttons_frame.grid(row=8, column=0, sticky='nw', padx=padx, pady=(0, pady))
+        ttk.Button(cat_buttons_frame, text='Add Category', command=self.add_category_popup, style='Primary.TButton').pack(pady=5, anchor='w', fill='x')
+        ttk.Button(cat_buttons_frame, text='Manage Categories', command=self.manage_categories_popup, style='Primary.TButton').pack(pady=5, fill='x')
+
+        cat_frame = ttk.Frame(form_frame)
+        cat_frame.grid(row=8, column=1, sticky='nsew', padx=padx, pady=(0, pady))
+        cat_frame.grid_propagate(False)
+        cat_frame.configure(width=250, height=120)
+        self.category_listbox = tk.Listbox(cat_frame, selectmode='browse', exportselection=0,
+                                           height=6, width=30, bg='white', font=('Segoe UI', 10),
+                                           highlightthickness=1, highlightcolor=ACCENT, borderwidth=1)
+        self.category_listbox.pack(side='left', fill='both', expand=True)
+        cat_scrollbar = ttk.Scrollbar(cat_frame, orient='vertical', command=self.category_listbox.yview)
+        cat_scrollbar.pack(side='right', fill='y')
+        self.category_listbox.configure(yscrollcommand=cat_scrollbar.set)
+
         # # factor entries with modern styling (shifted row indices)
         # factor_labels = [
         #     ('Score', 7),
@@ -1304,20 +1433,22 @@ class AppTracker(tk.Tk):
         _legend_chip(legend_frame, 'Med (50–69)', '#fff2cc')
         _legend_chip(legend_frame, 'Low (1–49)', '#ccffcc')
         
-        # Reduce visible columns to only what's required by the user: Business Unit, Division, Last Modified
+        # Reduce visible columns to only what's required by the user: Business Unit, Division, Category, Last Modified
         self.tree = ttk.Treeview(
             table_frame,
-            columns=('Business Unit', 'Division', 'Last Modified'),
+            columns=('Business Unit', 'Division', 'Category', 'Last Modified'),
             show='headings'
         )
         # tuned widths and anchors to align like the provided screenshot
         cols = list(self.tree['columns'])
-        base_widths = {'Business Unit': 420, 'Division': 300, 'Last Modified': 140}
+        base_widths = {'Business Unit': 380, 'Division': 260, 'Category': 180, 'Last Modified': 140}
         for col in cols:
             w = base_widths.get(col, 120)
             if col == 'Business Unit':
                 anchor = 'w'
             elif col == 'Division':
+                anchor = 'w'
+            elif col == 'Category':
                 anchor = 'w'
             elif col == 'Last Modified':
                 anchor = 'w'
@@ -1494,6 +1625,15 @@ class AppTracker(tk.Tk):
         #     messagebox.showerror('Error', 'All factor fields must be integers.')
         #     return
         fields['name'] = name
+        # If a category is selected, set category_id
+        try:
+            sel = self.category_listbox.curselection()
+            if sel:
+                cats = self.get_categories()
+                if sel[0] < len(cats):
+                    fields['category_id'] = cats[sel[0]][0]
+        except Exception:
+            pass
         # fields['vendor'] = vendor
         # update db
         database.update_application(app_id, fields)
@@ -1543,6 +1683,17 @@ class AppTracker(tk.Tk):
         # Use database helper to create application rows and links
         try:
             app_ids = database.add_application(name, vendor, factors, dept_ids, notes='')
+            # Update category for the newly added app id (single)
+            try:
+                if app_ids:
+                    app_id = app_ids
+                    sel = self.category_listbox.curselection()
+                    if sel:
+                        cats = self.get_categories()
+                        if sel[0] < len(cats):
+                            database.update_application(app_id, {'category_id': cats[sel[0]][0]})
+            except Exception:
+                pass
         except Exception as e:
             messagebox.showerror('Error', f'Failed to add application: {e}')
             return
@@ -1555,6 +1706,10 @@ class AppTracker(tk.Tk):
         # for entry in self.factor_entries.values():
         #     entry.delete(0, tk.END)
         self.department_listbox.selection_clear(0, tk.END)
+        try:
+            self.category_listbox.selection_clear(0, tk.END)
+        except Exception:
+            pass
         self.refresh_table()
 
     def update_search_selections(self):
@@ -1616,7 +1771,7 @@ class AppTracker(tk.Tk):
         except Exception:
             avg_map = {}
 
-        c.execute('''SELECT id, name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, notes, risk_score, last_modified FROM applications''')
+        c.execute('''SELECT id, name, vendor, score, need, criticality, installed, disaster_recovery, safety, security, monetary, customer_service, notes, risk_score, last_modified, category_id FROM applications''')
         rows = []
         for app_row in c.fetchall():
             # Determine app id reliably
@@ -1656,8 +1811,22 @@ class AppTracker(tk.Tk):
             except Exception:
                 division = app_row[1]
 
+            # Category: look up via category_id
+            category_display = ''
+            try:
+                cat_id = None
+                if hasattr(app_row, 'keys'):
+                    cat_id = app_row.get('category_id')
+                else:
+                    cat_id = app_row[15] if len(app_row) > 15 else None
+                if cat_id:
+                    cat_name = database.get_category_name(cat_id)
+                    category_display = cat_name or ''
+            except Exception:
+                category_display = ''
+
             # User requested Business Unit first, then Division
-            row = (dept_str, division, last_mod_display)
+            row = (dept_str, division, category_display, last_mod_display)
 
             # Apply search filtering
             if search_text:
@@ -1667,8 +1836,8 @@ class AppTracker(tk.Tk):
                     continue
 
             rows.append((row, app_id, risk_score))
-        # Sort rows by the 'System' column (index 0)
-        rows.sort(key=lambda x: x[0][0].lower())
+        # Sort rows by the 'Business Unit' column (index 0)
+        rows.sort(key=lambda x: (x[0][0] or '').lower())
         for row, app_id, risk_score in rows:
             color = get_risk_color(risk_score)
             # store the app id as the item iid so we can identify it later
@@ -2185,6 +2354,7 @@ class AppTracker(tk.Tk):
         expected_cols = [
             'name', 'vendor', 'business_unit', 'score', 'need', 'criticality', 'installed',
             'disasterrecovery', 'safety', 'security', 'monetary', 'customerservice', 'notes',
+            'category',
             'integration_name', 'integration_vendor', 'integration_score', 'integration_need', 'integration_criticality',
             'integration_installed', 'integration_dr', 'integration_safety', 'integration_security', 'integration_monetary',
             'integration_customerservice', 'integration_risk', 'integration_last_modified'
@@ -2329,13 +2499,13 @@ class AppTracker(tk.Tk):
                         if opt in header_map:
                             val = raw.get(header_map[opt])
                             if val is not None:
-                                return val
+                                return str(val).strip()
                         # Try normalized version
                         nk = _norm_key(opt)
                         if nk in header_map:
                             val = raw.get(header_map[nk])
                             if val is not None:
-                                return val
+                                return str(val).strip()
                     return ''
 
                 # parse potentially multiple BU names from a field
@@ -2353,9 +2523,19 @@ class AppTracker(tk.Tk):
 
                 for rownum, raw in enumerate(reader, start=2):
                     try:
+                        # Skip completely blank rows (all empty/whitespace)
+                        try:
+                            if not raw or all((v is None or str(v).strip() == '' for v in raw.values())):
+                                continue
+                        except Exception:
+                            pass
                         # Map fields flexibly with normalized keys
                         app_name = get('name', 'app_name', 'App Name') or ''
+                        # Skip rows without an application name to avoid blank entries
+                        if not app_name:
+                            continue
                         vendor = get('vendor', 'Vendor') or ''
+                        category_name = get('category', 'Category') or ''
                         # Accept multiple possible BU header names, including 'Business Unit / Division'
                         bu_field_val = get('business_unit', 'businessunit', 'Business Unit', 'business_unit_division', 'businessunitdivision', 'Business Unit / Division', 'department', 'dept', 'bu') or ''
                         bu_names = parse_bu_names(bu_field_val)
@@ -2415,7 +2595,8 @@ class AppTracker(tk.Tk):
                                         'security': security,
                                         'monetary': monetary,
                                         'customer_service': customer_service,
-                                        'notes': notes
+                                        'notes': notes,
+                                        'category_id': database.ensure_category(category_name) if category_name else None
                                     })
                                     updated_apps += 1
                                 except Exception:
@@ -2442,10 +2623,11 @@ class AppTracker(tk.Tk):
                                             cur.execute('''
                                                 INSERT INTO applications 
                                                 (name, vendor, score, need, criticality, installed, disaster_recovery, 
-                                                safety, security, monetary, customer_service, notes, risk_score, last_modified)
-                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                                safety, security, monetary, customer_service, notes, risk_score, last_modified, category_id)
+                                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                                             ''', (app_name, vendor, score, need, criticality, installed, disaster_recovery,
-                                                safety, security, monetary, customer_service, notes, app_risk, now_iso))
+                                                safety, security, monetary, customer_service, notes, app_risk, now_iso,
+                                                database.ensure_category(category_name) if category_name else None))
                                             app_id = cur.lastrowid
                                             
                                             # Create business unit links if needed
@@ -2541,6 +2723,14 @@ class AppTracker(tk.Tk):
                     except Exception:
                         pass
 
+                # Cleanup any blank applications created inadvertently
+                try:
+                    if conn and cur:
+                        cur.execute("DELETE FROM applications WHERE name IS NULL OR TRIM(name) = ''")
+                        conn.commit()
+                except Exception:
+                    pass
+
                 # commit once after processing
                 try:
                     if conn:
@@ -2581,6 +2771,11 @@ class AppTracker(tk.Tk):
             self.department_listbox.delete(0, 'end')  # Clear and refresh department listbox
             for dept_id, dept_name in self.get_departments():
                 self.department_listbox.insert('end', dept_name)
+            # Refresh categories so new CSV categories appear immediately
+            try:
+                self.populate_category_listbox()
+            except Exception:
+                pass
             
         try:
             self._import_progress_win = None
