@@ -1828,10 +1828,68 @@ class AppTracker(tk.Tk):
     def purge_database_gui(self):
         if messagebox.askyesno('Confirm Purge', 'Are you sure you want to delete ALL data? This cannot be undone.'):
             database.purge_database()
-            self.department_listbox.delete(0, 'end')
-            for dept_id, dept_name in self.get_departments():
-                self.department_listbox.insert('end', dept_name)
-            self.refresh_table()
+            # Refresh various UI elements to reflect empty database
+            try:
+                # Refresh department and division lists
+                if hasattr(self, 'refresh_departments'):
+                    try:
+                        self.refresh_departments()
+                    except Exception:
+                        # fallback to manual refresh
+                        self.department_listbox.delete(0, 'end')
+                        for dept_id, dept_name in self.get_departments():
+                            self.department_listbox.insert('end', dept_name)
+                if hasattr(self, 'refresh_division_listbox'):
+                    try:
+                        self.refresh_division_listbox()
+                    except Exception:
+                        pass
+
+                # Refresh category listbox
+                if hasattr(self, 'populate_category_listbox'):
+                    try:
+                        self.populate_category_listbox()
+                    except Exception:
+                        # Fallback: try a manual repopulate from get_categories()
+                        try:
+                            if hasattr(self, 'category_listbox') and self.category_listbox is not None:
+                                self.category_listbox.delete(0, 'end')
+                                for cid, cname in self.get_categories():
+                                    self.category_listbox.insert('end', cname)
+                        except Exception:
+                            pass
+
+                # Clear selected app/category state
+                try:
+                    self.selected_app_id = None
+                except Exception:
+                    pass
+                try:
+                    self.selected_category_name = None
+                except Exception:
+                    pass
+
+                # Refresh main table and integrations table
+                try:
+                    self.refresh_table()
+                except Exception:
+                    pass
+                try:
+                    self.refresh_integration_table(None)
+                except Exception:
+                    pass
+
+                # Clear details area
+                try:
+                    if hasattr(self, 'details_text') and self.details_text is not None:
+                        self.details_text.configure(state='normal')
+                        self.details_text.delete('1.0', 'end')
+                        self.details_text.configure(state='disabled')
+                except Exception:
+                    pass
+            except Exception:
+                pass
+
             messagebox.showinfo('Purge Complete', 'All data has been deleted.')
 
     def create_widgets(self):
@@ -1908,7 +1966,7 @@ class AppTracker(tk.Tk):
 
         ttk.Separator(form_frame, orient='horizontal').grid(row=1, column=0, columnspan=2, sticky='ew', pady=(8, 8))
 
-        side_btn_width = 20
+        side_btn_width = 20 # Consistent button width
         buttons_frame = ttk.Frame(form_frame)
         buttons_frame.grid(row=2, column=0, sticky='nw', padx=padx, pady=pady)
         ttk.Button(buttons_frame, text='Add Business Unit', command=self.add_department_popup, style='Primary.TButton', width=side_btn_width).pack(pady=5, anchor='w', fill='x')
@@ -1989,20 +2047,17 @@ class AppTracker(tk.Tk):
         submit_frame = ttk.Frame(form_frame)
         submit_frame.grid(row=10, column=0, columnspan=2, sticky='w', padx=padx, pady=(6, 12))
         # Keep reference to the button so we can enable/disable it based on selections
-        self.submit_button = ttk.Button(submit_frame, text='Submit Selection', command=self.submit_selection, style='Primary.TButton', width=side_btn_width+4)
+        self.submit_button = ttk.Button(submit_frame, text='Submit Selection', command=self.submit_selection, style='Primary.TButton', width=side_btn_width)
         self.submit_button.pack(side='left')
 
-        # Add Show Report and Import CSV buttons under the submit controls (blue Primary style)
+        # Add Import CSV button under the submit controls (left-aligned next to Submit Selection)
         # Show Report button moved to top_buttons_frame
-        # Move Import CSV to its own centered row under the submit controls
+        # Place Import CSV in its own row under the submit controls (left-aligned)
         try:
             import_row = ttk.Frame(form_frame)
-            import_row.grid(row=11, column=0, columnspan=2, sticky='ew', padx=padx, pady=(0,12))
-            import_row.grid_columnconfigure(0, weight=1)
-            import_center = ttk.Frame(import_row)
-            import_center.grid(row=0, column=0)
-            import_btn = ttk.Button(import_center, text='Import CSV', command=self.import_csv_dialog, style='Primary.TButton')
-            import_btn.pack()
+            import_row.grid(row=11, column=0, columnspan=2, sticky='w', padx=padx, pady=(0, 12))
+            import_btn = ttk.Button(import_row, text='Import CSV', command=self.import_csv_dialog, style='Primary.TButton', width=side_btn_width)
+            import_btn.pack(side='left')
         except Exception:
             pass
 

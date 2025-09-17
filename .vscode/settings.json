@@ -1,0 +1,5 @@
+{
+    "python.defaultInterpreterPath": "G:/My Drive/Python/Projects/NVapps/.venv/Scripts/python.exe",
+    "terminal.integrated.defaultProfile.windows": "PowerShell",
+    "python.testing.unittestEnabled": false
+}
