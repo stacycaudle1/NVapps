@@ -2233,9 +2233,9 @@ class AppTracker(tk.Tk):
         self.integrations_tree = ttk.Treeview(
             integrations_frame,
             columns=(
-                'Name', 'Vendor', 'Score', 'Need', 'Criticality', 'Installed',
+                'Name', 'Vendor', 'Risk', 'Score', 'Criticality', 'Need', 'Installed',
                     'DR', 'Safety', 'Security', 'Monetary', 'CustomerService',
-                'Risk', 'Last Modified'
+                'Last Modified'
             ),
             show='headings'
         )
@@ -2243,9 +2243,9 @@ class AppTracker(tk.Tk):
         # Apply column settings to integrations table
         int_cols = list(self.integrations_tree['columns'])
         col_widths = {
-            'Name': 220, 'Vendor': 160, 'Score': 80, 'Need': 80, 'Criticality': 90,
+            'Name': 220, 'Vendor': 160, 'Risk': 80, 'Score': 80, 'Criticality': 90, 'Need': 80,
             'Installed': 80, 'DR': 80, 'Safety': 80, 'Security': 80,
-            'Monetary': 80, 'CustomerService': 140, 'Risk': 80, 'Last Modified': 150
+            'Monetary': 80, 'CustomerService': 140, 'Last Modified': 150
         }
         
         for col in int_cols:
@@ -2265,9 +2265,13 @@ class AppTracker(tk.Tk):
         
         # Vertical scrollbar for integrations table
         int_vsb = ttk.Scrollbar(integrations_frame, orient='vertical', command=self.integrations_tree.yview)
-        self.integrations_tree.configure(yscrollcommand=int_vsb.set)
+        # Horizontal scrollbar for integrations table
+        int_hsb = ttk.Scrollbar(integrations_frame, orient='horizontal', command=self.integrations_tree.xview)
+        self.integrations_tree.configure(yscrollcommand=int_vsb.set, xscrollcommand=int_hsb.set)
         self.integrations_tree.grid(row=1, column=0, sticky='nsew')
         int_vsb.grid(row=1, column=1, sticky='ns')
+        # Place horizontal scrollbar below the tree, spanning the table column
+        int_hsb.grid(row=2, column=0, sticky='ew')
         integrations_frame.rowconfigure(1, weight=1)
         integrations_frame.columnconfigure(0, weight=1)
         
@@ -2810,19 +2814,41 @@ class AppTracker(tk.Tk):
                     # Ensure table is refreshed first so values are current
                     self.refresh_integration_table()
                     risk_values = []
+                    # Determine the index of the 'Risk' column dynamically so this works
+                    # even if columns were reordered. Use the Treeview's configured
+                    # columns; if not available, fall back to scanning header values.
+                    risk_col_index = None
+                    try:
+                        cols = list(self.integrations_tree['columns'])
+                        if 'Risk' in cols:
+                            risk_col_index = cols.index('Risk')
+                    except Exception:
+                        cols = []
+
                     for iid in self.integrations_tree.get_children():
                         vals = self.integrations_tree.item(iid, 'values')
-                        # Risk column is after name, vendor, and 9 rating columns => index 2 + 9 = 11
-                        # Columns order: name(0), vendor(1), 9 ratings (2-10), risk (11), last_mod(12)
-                        if len(vals) >= 12:
-                            risk_text = vals[11]
-                            if risk_text and '(' in risk_text:
-                                num_part = risk_text.split('(')[0].strip()
-                                try:
-                                    val_f = float(num_part)
-                                    risk_values.append(val_f)
-                                except ValueError:
-                                    pass
+                        # If we found a 'Risk' column, use its index; otherwise
+                        # attempt to find a value that looks like 'number (Band)'.
+                        if risk_col_index is not None:
+                            if len(vals) > risk_col_index:
+                                risk_text = vals[risk_col_index]
+                            else:
+                                risk_text = None
+                        else:
+                            # Scan values for the first one matching the pattern
+                            risk_text = None
+                            for v in vals:
+                                if isinstance(v, str) and '(' in v and any(ch.isdigit() for ch in v):
+                                    risk_text = v
+                                    break
+
+                        if risk_text and '(' in risk_text:
+                            num_part = risk_text.split('(')[0].strip()
+                            try:
+                                val_f = float(num_part)
+                                risk_values.append(val_f)
+                            except ValueError:
+                                pass
                     if risk_values:
                         avg_val = sum(risk_values) / len(risk_values)
                 except Exception:
@@ -4585,7 +4611,22 @@ class AppTracker(tk.Tk):
                         last_mod = ''
 
                 # Build values in exact column order expected by the integrations_tree
-                values = [name, vendor] + ratings + [risk_text, last_mod]
+                # New column order: Name, Vendor, Risk, Score, Criticality, Need, Installed, DR, Safety, Security, Monetary, CustomerService, Last Modified
+                score = ratings[0] if len(ratings) > 0 else 0
+                need = ratings[1] if len(ratings) > 1 else 0
+                criticality = ratings[2] if len(ratings) > 2 else 0
+                installed = ratings[3] if len(ratings) > 3 else 0
+                dr = ratings[4] if len(ratings) > 4 else 0
+                safety = ratings[5] if len(ratings) > 5 else 0
+                security = ratings[6] if len(ratings) > 6 else 0
+                monetary = ratings[7] if len(ratings) > 7 else 0
+                cust_service = ratings[8] if len(ratings) > 8 else 0
+
+                values = [
+                    name, vendor, risk_text, score, criticality, need,
+                    installed, dr, safety, security, monetary, cust_service,
+                    last_mod
+                ]
 
                 color = get_risk_color(risk_score)
                 if color:
