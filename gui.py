@@ -91,6 +91,13 @@ class AppTracker(tk.Tk):
         except Exception:
             pass
         self.refresh_table()
+        # Ensure submit button starts disabled & primary style
+        try:
+            if hasattr(self, 'submit_button') and self.submit_button is not None:
+                self.submit_button.state(['disabled'])
+                self.submit_button.configure(style='Primary.TButton')
+        except Exception:
+            pass
 
     def setup_style(self):
         style = ttk.Style(self)
@@ -2604,6 +2611,13 @@ class AppTracker(tk.Tk):
                     database.touch_application(app_id)
                 except Exception:
                     pass
+                # Flash green before showing success (set explicitly)
+                try:
+                    if hasattr(self, 'submit_button') and self.submit_button is not None:
+                        self.submit_button.configure(style='Success.TButton')
+                        self.submit_button.state(['!disabled'])
+                except Exception:
+                    pass
                 messagebox.showinfo('Success', f'Created application for Division "{division_name}"')
             else:
                 messagebox.showerror('Error', 'Failed to create application entry.')
@@ -2626,6 +2640,124 @@ class AppTracker(tk.Tk):
             pass
         self.refresh_table()
 
+        # Highlight the newly created application's row(s) (one per category) after table refresh
+        try:
+            if app_id:
+                # Find all iids matching the new app id prefix
+                new_iids = [iid for iid in self.tree.get_children('') if str(iid).startswith(f"{app_id}:")]
+                if new_iids:
+                    # Define highlight tag
+                    try:
+                        self.tree.tag_configure('newflash', background='#cfe8ff')  # light blue
+                    except Exception:
+                        pass
+                    for iid in new_iids:
+                        try:
+                            current_tags = self.tree.item(iid, 'tags') or ()
+                            if 'newflash' not in current_tags:
+                                self.tree.item(iid, tags=current_tags + ('newflash',))
+                        except Exception:
+                            pass
+                    # Select first new row
+                    try:
+                        self.tree.selection_set(new_iids[0])
+                        self.tree.see(new_iids[0])
+                    except Exception:
+                        pass
+
+                    # Fade out effect: gradually blend back to transparent by alternating shade then removing tag
+                    fade_steps = ['#cfe8ff', '#d9edff', '#e3f2ff', '#ecf6ff', '#f5faff']
+                    def fade_step(i=0):
+                        try:
+                            if i < len(fade_steps):
+                                shade = fade_steps[i]
+                                try:
+                                    self.tree.tag_configure('newflash', background=shade)
+                                except Exception:
+                                    pass
+                                self.after(120, lambda: fade_step(i+1))
+                            else:
+                                # Remove highlight by clearing tag background and removing tag from rows
+                                try:
+                                    self.tree.tag_configure('newflash', background='')
+                                except Exception:
+                                    pass
+                                for iid in new_iids:
+                                    try:
+                                        tags_now = tuple(t for t in self.tree.item(iid, 'tags') if t != 'newflash')
+                                        self.tree.item(iid, tags=tags_now)
+                                    except Exception:
+                                        pass
+                        except Exception:
+                            pass
+                    # Kick off fade after slight delay so initial color is visible
+                    self.after(150, fade_step)
+        except Exception:
+            pass
+
+        # Start fading the button from green to blue (ACCENT) over ~1s, then disable
+        try:
+            if hasattr(self, 'submit_button') and self.submit_button is not None:
+                self._submit_fading = True
+
+                # Define start (green) and end (blue) colors
+                start_rgb = (144, 238, 144)  # #90EE90
+                # Parse ACCENT hex (#0078d4 typical) if defined
+                try:
+                    end_hex = ACCENT if ACCENT.startswith('#') and len(ACCENT) == 7 else '#0078d4'
+                except Exception:
+                    end_hex = '#0078d4'
+                end_rgb = (int(end_hex[1:3], 16), int(end_hex[3:5], 16), int(end_hex[5:7], 16))
+
+                steps = 20
+                interval = 50  # ms (20 * 50 = 1000ms)
+
+                def lerp(a, b, t):
+                    return int(a + (b - a) * t)
+
+                # Use a single dynamic style for flash instead of direct background configure
+                dyn_style_name = 'SubmitFlashDynamic.TButton'
+                try:
+                    ttk.Style(self.submit_button).configure(dyn_style_name, background='#90EE90', foreground='white', borderwidth=0)
+                except Exception:
+                    pass
+
+                def step(i=0):
+                    try:
+                        if not hasattr(self, 'submit_button') or self.submit_button is None:
+                            return
+                        t = i / float(steps)
+                        r = lerp(start_rgb[0], end_rgb[0], t)
+                        g = lerp(start_rgb[1], end_rgb[1], t)
+                        b = lerp(start_rgb[2], end_rgb[2], t)
+                        hex_color = f"#{r:02x}{g:02x}{b:02x}"
+                        try:
+                            style = ttk.Style(self.submit_button)
+                            style.configure(dyn_style_name, background=hex_color)
+                            self.submit_button.configure(style=dyn_style_name)
+                        except Exception:
+                            pass
+                        if i < steps:
+                            self.after(interval, lambda: step(i + 1))
+                        else:
+                            # Finalize: apply primary style & disable
+                            try:
+                                self.submit_button.configure(style='Primary.TButton')
+                            except Exception:
+                                pass
+                            try:
+                                self.submit_button.state(['disabled'])
+                            except Exception:
+                                pass
+                            self._submit_fading = False
+                    except Exception:
+                        pass
+
+                # Kick off fade after UI idle so messagebox close doesn't block initial frame
+                self.after(50, step)
+        except Exception:
+            pass
+
     def update_submit_button_state(self):
         """Enable the submit button only when a dept, division and category are selected."""
         try:
@@ -2633,10 +2765,30 @@ class AppTracker(tk.Tk):
             has_div = bool(self.division_listbox.curselection())
             has_cat = bool(self.category_listbox.curselection())
             if hasattr(self, 'submit_button') and self.submit_button is not None:
+                if getattr(self, '_submit_fading', False):
+                    # During fade, ignore attempts to restyle/enable
+                    return
                 if has_dept and has_div and has_cat:
-                    self.submit_button.state(['!disabled'])
+                    # Enable and switch to green success style
+                    try:
+                        self.submit_button.state(['!disabled'])
+                        self.submit_button.configure(style='Success.TButton')
+                    except Exception:
+                        # Fallback: at least enable the button
+                        try:
+                            self.submit_button.state(['!disabled'])
+                        except Exception:
+                            pass
                 else:
-                    self.submit_button.state(['disabled'])
+                    # Disable and revert to primary style
+                    try:
+                        self.submit_button.state(['disabled'])
+                        self.submit_button.configure(style='Primary.TButton')
+                    except Exception:
+                        try:
+                            self.submit_button.state(['disabled'])
+                        except Exception:
+                            pass
         except Exception:
             pass
 
