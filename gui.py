@@ -276,9 +276,13 @@ class AppTracker(tk.Tk):
                 return
             conn = database.connect_db()
             c = conn.cursor()
-            c.execute('INSERT OR IGNORE INTO business_units (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)', (dept_name,))
-            conn.commit()
-            conn.close()
+            try:
+                # Upsert business unit name and update last_modified when it already exists
+                c.execute('''INSERT INTO business_units (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)
+                             ON CONFLICT(name) DO UPDATE SET last_modified = CURRENT_TIMESTAMP''', (dept_name,))
+                conn.commit()
+            finally:
+                conn.close()
             # Update department_listbox with new departments
             self.department_listbox.delete(0, 'end')
             for dept_id, dept_name in self.get_departments():
@@ -287,6 +291,122 @@ class AppTracker(tk.Tk):
             popup.destroy()
 
         ttk.Button(popup, text='Add', command=add_dept, style='Primary.TButton').pack(padx=10, pady=10)
+
+    def add_division_popup(self):
+        """Popup to add a new Division (stored in applications.division when new apps are created)."""
+        popup = tk.Toplevel(self)
+        popup.title('Add Division')
+        ttk.Label(popup, text='Division:').pack(padx=10, pady=5)
+        div_entry = ttk.Entry(popup)
+        div_entry.pack(padx=10, pady=5)
+
+        def add_div():
+            div_name = div_entry.get().strip()
+            if not div_name:
+                return
+            # We just insert a placeholder application to register division? Avoid that; instead we
+            # keep a lightweight memory list by inserting into a helper table or simply rely on
+            # existing apps. For simplicity, create an inert row only if division not present via an app.
+            db_success = False
+            try:
+                # If a division already exists as an application, just touch its last_modified
+                conn = database.connect_db()
+                c = conn.cursor()
+                c.execute('SELECT id FROM applications WHERE TRIM(division) = ? LIMIT 1', (div_name,))
+                row = c.fetchone()
+                conn.close()
+                if row and row[0]:
+                    try:
+                        database.touch_application(int(row[0]))
+                        db_success = True
+                    except Exception:
+                        db_success = False
+                else:
+                    # Create a new application row for this division
+                    database.add_application(div_name, '', {}, [], notes='')
+                    db_success = True
+            except Exception as e:
+                # Common case may be 'database is locked' or other DB errors; inform the user and fall back to local update
+                try:
+                    messagebox.showwarning('Database Busy', f'Could not add division to database right now: {e}. The division will be shown temporarily until DB becomes available.')
+                except Exception:
+                    pass
+            # Refresh division list — if DB write failed, still insert the division locally so it appears immediately
+            try:
+                if db_success:
+                    self.refresh_division_listbox()
+                else:
+                    # Insert locally at end if not present
+                    try:
+                        existing = [self.division_listbox.get(i) for i in range(self.division_listbox.size())]
+                        if div_name not in existing:
+                            self.division_listbox.insert(tk.END, div_name)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+            popup.destroy()
+
+        ttk.Button(popup, text='Add', command=add_div, style='Primary.TButton').pack(padx=10, pady=10)
+
+    def manage_divisions_popup(self):
+        """Popup to rename or delete existing divisions (by modifying application rows)."""
+        popup = tk.Toplevel(self)
+        popup.title('Manage Divisions')
+        popup.geometry('300x350')
+
+        listbox = tk.Listbox(popup, selectmode='single')
+        listbox.pack(fill='both', expand=True, padx=10, pady=10)
+        try:
+            import sqlite3
+            conn = sqlite3.connect('business_apps.db')
+            c = conn.cursor()
+            c.execute('SELECT DISTINCT division FROM applications WHERE division IS NOT NULL AND TRIM(division) != "" ORDER BY division')
+            for (d,) in c.fetchall():
+                listbox.insert(tk.END, d)
+            conn.close()
+        except Exception:
+            pass
+
+        def get_selected_division():
+            sel = listbox.curselection()
+            if not sel:
+                return None
+            return listbox.get(sel[0])
+
+        def rename_division():
+            old = get_selected_division()
+            if not old:
+                return
+            new = simpledialog.askstring('Rename Division', 'New name:')
+            if not new:
+                return
+            try:
+                import sqlite3
+                conn = sqlite3.connect('business_apps.db')
+                c = conn.cursor()
+                c.execute('UPDATE applications SET division = ? WHERE division = ?', (new.strip(), old))
+                conn.commit()
+                conn.close()
+                self.refresh_division_listbox()
+                popup.destroy()
+            except Exception as e:
+                messagebox.showerror('Error', f'Failed to rename division: {e}')
+
+        def delete_division():
+            d = get_selected_division()
+            if not d:
+                return
+            if not messagebox.askyesno('Delete Division', f'Delete division "{d}"? All related application rows will retain this division unless manually changed.'):
+                return
+            # Deleting a division without modifying apps would leave them; skipping destructive change.
+            # Instead, we warn user. Could implement clearing division; for now we just abort.
+            messagebox.showinfo('Notice', 'Division deletion does not remove existing application rows. Implement custom logic if needed.')
+
+        btn_frame = ttk.Frame(popup)
+        btn_frame.pack(fill='x', padx=10, pady=5)
+        ttk.Button(btn_frame, text='Rename', command=rename_division, style='Primary.TButton').pack(side='left', padx=5)
+        ttk.Button(btn_frame, text='Delete', command=delete_division, style='Danger.TButton').pack(side='left', padx=5)
 
     def create_table_with_scrollbars(self, parent, columns, widths=None, sort_handler=None, pack_opts=None,
                                      anchors=None, formatters=None, zebra=True, zebra_colors=("#ffffff", "#f7f7f7")):
@@ -1246,18 +1366,19 @@ class AppTracker(tk.Tk):
 
         ttk.Separator(form_frame, orient='horizontal').grid(row=1, column=0, columnspan=2, sticky='ew', pady=(8, 8))
 
+        side_btn_width = 20
         buttons_frame = ttk.Frame(form_frame)
         buttons_frame.grid(row=2, column=0, sticky='nw', padx=padx, pady=pady)
-        ttk.Button(buttons_frame, text='Add Business Unit', command=self.add_department_popup, style='Primary.TButton').pack(pady=5, anchor='w', fill='x')
-        ttk.Button(buttons_frame, text='Manage Business Units', command=self.manage_departments_popup, style='Primary.TButton').pack(pady=5, fill='x')
+        ttk.Button(buttons_frame, text='Add Business Unit', command=self.add_department_popup, style='Primary.TButton', width=side_btn_width).pack(pady=5, anchor='w', fill='x')
+        ttk.Button(buttons_frame, text='Manage Business Units', command=self.manage_departments_popup, style='Primary.TButton', width=side_btn_width).pack(pady=5, fill='x')
 
         dept_frame = ttk.Frame(form_frame)
         dept_frame.grid(row=2, column=1, sticky='nsew', padx=padx, pady=pady)
         dept_frame.grid_propagate(False)
-        dept_frame.configure(width=250, height=200)
+        dept_frame.configure(width=250, height=120)
         self.department_listbox = tk.Listbox(dept_frame, selectmode='multiple', exportselection=0,
-                                           height=15, width=30, bg='white', font=('Segoe UI', 10),
-                                           highlightthickness=1, highlightcolor=ACCENT, borderwidth=1)
+                                             height=6, width=30, bg='white', font=('Segoe UI', 10),
+                                             highlightthickness=1, highlightcolor=ACCENT, borderwidth=1)
         self.department_listbox.pack(side='left', fill='both', expand=True)
         dept_scrollbar = ttk.Scrollbar(dept_frame, orient='vertical', command=self.department_listbox.yview)
         dept_scrollbar.pack(side='right', fill='y')
@@ -1274,22 +1395,43 @@ class AppTracker(tk.Tk):
         # ratings_header = tk.Label(form_frame, text="Division", **self.category_style)
         #ratings_header.grid(row=5, column=0, sticky='w', pady=(0, 10))
 
-        app_name_label = tk.Label(form_frame, text='Enter Division:', **self.form_label_style)
-        app_name_label.grid(row=6, column=0, sticky='e', padx=(padx, 2), pady=pady)
-        self.name_entry = ttk.Entry(form_frame)
-        self.name_entry.grid(row=6, column=1, sticky='ew', padx=(0, padx), pady=pady)
+        # Division section header styled like Business Unit header
+        div_header = tk.Label(form_frame, text="Select Division:", **self.category_style)
+        div_header.grid(row=6, column=0, columnspan=2, sticky='nw', padx=padx, pady=(10, 2))
 
-        # Category selection section under Enter Division
+        div_buttons_frame = ttk.Frame(form_frame)
+        div_buttons_frame.grid(row=7, column=0, sticky='nw', padx=padx, pady=(0, pady))
+        ttk.Button(div_buttons_frame, text='Add Division', command=self.add_division_popup, style='Primary.TButton', width=side_btn_width).pack(pady=5, anchor='w', fill='x')
+        ttk.Button(div_buttons_frame, text='Manage Divisions', command=self.manage_divisions_popup, style='Primary.TButton', width=side_btn_width).pack(pady=5, fill='x')
+
+        div_frame = ttk.Frame(form_frame)
+        div_frame.grid(row=7, column=1, sticky='nsew', padx=(0, padx), pady=(0, pady))
+        div_frame.grid_propagate(False)
+        div_frame.configure(width=250, height=120)
+        self.division_listbox = tk.Listbox(div_frame, selectmode='single', exportselection=0,
+                                           height=6, width=30, bg='white', font=('Segoe UI', 10),
+                                           highlightthickness=1, highlightcolor=ACCENT, borderwidth=1)
+        self.division_listbox.pack(side='left', fill='both', expand=True)
+        div_scrollbar = ttk.Scrollbar(div_frame, orient='vertical', command=self.division_listbox.yview)
+        div_scrollbar.pack(side='right', fill='y')
+        self.division_listbox.configure(yscrollcommand=div_scrollbar.set)
+        # Populate initial divisions
+        try:
+            self.refresh_division_listbox()
+        except Exception:
+            pass
+
+        # Category selection section
         cat_header = tk.Label(form_frame, text="Select Category:", **self.category_style)
-        cat_header.grid(row=7, column=0, columnspan=2, sticky='nw', padx=padx, pady=(10, 2))
+        cat_header.grid(row=8, column=0, columnspan=2, sticky='nw', padx=padx, pady=(10, 2))
 
         cat_buttons_frame = ttk.Frame(form_frame)
-        cat_buttons_frame.grid(row=8, column=0, sticky='nw', padx=padx, pady=(0, pady))
-        ttk.Button(cat_buttons_frame, text='Add Category', command=self.add_category_popup, style='Primary.TButton').pack(pady=5, anchor='w', fill='x')
-        ttk.Button(cat_buttons_frame, text='Manage Categories', command=self.manage_categories_popup, style='Primary.TButton').pack(pady=5, fill='x')
+        cat_buttons_frame.grid(row=9, column=0, sticky='nw', padx=padx, pady=(0, pady))
+        ttk.Button(cat_buttons_frame, text='Add Category', command=self.add_category_popup, style='Primary.TButton', width=side_btn_width).pack(pady=5, anchor='w', fill='x')
+        ttk.Button(cat_buttons_frame, text='Manage Categories', command=self.manage_categories_popup, style='Primary.TButton', width=side_btn_width).pack(pady=5, fill='x')
 
         cat_frame = ttk.Frame(form_frame)
-        cat_frame.grid(row=8, column=1, sticky='nsew', padx=padx, pady=(0, pady))
+        cat_frame.grid(row=9, column=1, sticky='nsew', padx=padx, pady=(0, pady))
         cat_frame.grid_propagate(False)
         cat_frame.configure(width=250, height=120)
         # Allow multiple categories to be linked
@@ -1300,6 +1442,21 @@ class AppTracker(tk.Tk):
         cat_scrollbar = ttk.Scrollbar(cat_frame, orient='vertical', command=self.category_listbox.yview)
         cat_scrollbar.pack(side='right', fill='y')
         self.category_listbox.configure(yscrollcommand=cat_scrollbar.set)
+
+        # Submit button to create an application entry from selected Business Unit(s), Division and Category(s)
+        submit_frame = ttk.Frame(form_frame)
+        submit_frame.grid(row=10, column=0, columnspan=2, sticky='w', padx=padx, pady=(6, 12))
+        # Keep reference to the button so we can enable/disable it based on selections
+        self.submit_button = ttk.Button(submit_frame, text='Submit Selection', command=self.submit_selection, style='Primary.TButton', width=side_btn_width+4)
+        self.submit_button.pack(side='left')
+
+        # Bind selection changes to update the submit button state
+        try:
+            self.department_listbox.bind('<<ListboxSelect>>', lambda e: self.update_submit_button_state())
+            self.division_listbox.bind('<<ListboxSelect>>', lambda e: self.update_submit_button_state())
+            self.category_listbox.bind('<<ListboxSelect>>', lambda e: self.update_submit_button_state())
+        except Exception:
+            pass
 
         # # factor entries with modern styling (shifted row indices)
         # factor_labels = [
@@ -1329,8 +1486,9 @@ class AppTracker(tk.Tk):
         # self.vendor_entry = ttk.Entry(form_frame)
         # self.vendor_entry.grid(row=16, column=1, sticky='ew', padx=(0, padx), pady=pady)
 
-        # Add Division button (moved down to avoid overlap)
-        ttk.Button(form_frame, text='Add Division', command=self.add_application, style='Primary.TButton').grid(row=19, column=0, columnspan=2, sticky='ew', pady=(20,6), padx=padx)
+    # Note: the Division Add button is provided in the Division buttons frame above
+    # (div_buttons_frame) which correctly calls `self.add_division_popup`.
+    # Removed duplicate/miswired Add Division button that called `self.add_application`.
 
         # Create a frame for top-right buttons
         top_buttons_frame = ttk.Frame(right_frame)
@@ -1618,7 +1776,11 @@ class AppTracker(tk.Tk):
             self.department_listbox.selection_clear(0, tk.END)
 
             # Get the departments for this application
-            app_id = int(item)
+            # Support composite iid format "appId:category"
+            try:
+                app_id = int(item.split(':', 1)[0])
+            except ValueError:
+                raise ValueError(f"Invalid application id format: {item}")
             app_departments = database.get_app_departments(app_id)
 
             # Select departments in the listbox
@@ -1627,12 +1789,19 @@ class AppTracker(tk.Tk):
                 if dept_name in app_departments:
                     self.department_listbox.selection_set(i)
 
-            # Load application record from DB and populate form fields (reliable source)
-            app_row = database.get_application(app_id)
-            # Name and vendor come from DB (preferred)
+            # Load application record from DB and populate division listbox selection
             try:
-                self.name_entry.delete(0, 'end')
-                self.name_entry.insert(0, app_row['name'] if hasattr(app_row, 'keys') and 'name' in app_row.keys() else app_row[1])
+                app_row = database.get_application(app_id)
+                division_name = app_row['name'] if hasattr(app_row, 'keys') and 'name' in app_row.keys() else app_row[1]
+                # Ensure list is populated
+                self.refresh_division_listbox()
+                # Select matching division
+                for i in range(self.division_listbox.size()):
+                    if self.division_listbox.get(i) == division_name:
+                        self.division_listbox.selection_clear(0, tk.END)
+                        self.division_listbox.selection_set(i)
+                        self.division_listbox.see(i)
+                        break
             except Exception:
                 pass
             # Preselect categories for this app
@@ -1656,11 +1825,18 @@ class AppTracker(tk.Tk):
         item = sel[0]
         # get app id from iid
         try:
-            app_id = int(item)
+            app_id = int(item.split(':', 1)[0])
         except Exception:
             messagebox.showerror('Save', 'Could not determine application id for selected row.')
             return
-        name = self.name_entry.get().strip()
+        # Determine selected division
+        name = ''
+        try:
+            sel_idx = self.division_listbox.curselection()
+            if sel_idx:
+                name = self.division_listbox.get(sel_idx[0]).strip()
+        except Exception:
+            pass
         # vendor = self.vendor_entry.get().strip()
         fields = {}
         # try:
@@ -1689,7 +1865,11 @@ class AppTracker(tk.Tk):
         self.refresh_table()
         
         # Clear form fields after saving
-        self.name_entry.delete(0, 'end')
+        # Clear division selection (no direct text entry now)
+        try:
+            self.division_listbox.selection_clear(0, tk.END)
+        except Exception:
+            pass
         # self.vendor_entry.delete(0, 'end')
         # for entry in self.factor_entries.values():
         #     entry.delete(0, 'end')
@@ -1698,7 +1878,12 @@ class AppTracker(tk.Tk):
         messagebox.showinfo('Saved', 'Changes saved.')
 
     def add_application(self):
-        name = self.name_entry.get()
+        # Placeholder: division now selected via listbox
+        try:
+            sel_idx = self.division_listbox.curselection()
+            name = self.division_listbox.get(sel_idx[0]) if sel_idx else ''
+        except Exception:
+            name = ''
         vendor = ""  # Default to empty string if vendor entry does not exist
         # if hasattr(self, 'vendor_entry'):
         #     try:
@@ -1753,7 +1938,10 @@ class AppTracker(tk.Tk):
         if not app_ids:
             messagebox.showerror('Error', 'Failed to create application entries.')
 
-        self.name_entry.delete(0, tk.END)
+        try:
+            self.division_listbox.selection_clear(0, tk.END)
+        except Exception:
+            pass
         # self.vendor_entry.delete(0, tk.END)
         # for entry in self.factor_entries.values():
         #     entry.delete(0, tk.END)
@@ -1763,6 +1951,90 @@ class AppTracker(tk.Tk):
         except Exception:
             pass
         self.refresh_table()
+
+    def submit_selection(self):
+        """Create application(s) from selected Business Unit(s), Division and Category(s)."""
+        # Get selected departments (business units)
+        dept_indices = self.department_listbox.curselection()
+        if not dept_indices:
+            messagebox.showerror('Error', 'Please select at least one Business Unit.')
+            return
+        departments = self.get_departments()
+        dept_ids = [departments[i][0] for i in dept_indices]
+
+        # Get selected division (single select)
+        try:
+            sel_div = self.division_listbox.curselection()
+            if not sel_div:
+                messagebox.showerror('Error', 'Please select a Division.')
+                return
+            division_name = self.division_listbox.get(sel_div[0])
+        except Exception:
+            messagebox.showerror('Error', 'Please select a Division.')
+            return
+
+        # Get selected categories (multiple)
+        cat_sel = self.category_listbox.curselection()
+        if not cat_sel:
+            messagebox.showerror('Error', 'Please select at least one Category.')
+            return
+        cats = self.get_categories()
+        cat_ids = [cats[i][0] for i in cat_sel if i < len(cats)]
+
+        # Confirm with the user before creating entries
+        confirm = messagebox.askyesno('Confirm Create', f'Create application for Division "{division_name}" linked to {len(dept_ids)} Business Unit(s) and {len(cat_ids)} Category(s)?')
+        if not confirm:
+            return
+
+        # Use database helper to create the application and set categories
+        try:
+            app_id = database.add_application(division_name, '', {}, dept_ids, notes='')
+            if app_id:
+                try:
+                    database.set_app_categories(app_id, cat_ids)
+                except Exception:
+                    # Non-fatal: continue
+                    pass
+                # Ensure last_modified updated when categories are set
+                try:
+                    database.touch_application(app_id)
+                except Exception:
+                    pass
+                messagebox.showinfo('Success', f'Created application for Division "{division_name}"')
+            else:
+                messagebox.showerror('Error', 'Failed to create application entry.')
+        except Exception as e:
+            messagebox.showerror('Error', f'Failed to create application: {e}')
+            return
+
+        # Clear selections and refresh
+        try:
+            self.department_listbox.selection_clear(0, tk.END)
+        except Exception:
+            pass
+        try:
+            self.division_listbox.selection_clear(0, tk.END)
+        except Exception:
+            pass
+        try:
+            self.category_listbox.selection_clear(0, tk.END)
+        except Exception:
+            pass
+        self.refresh_table()
+
+    def update_submit_button_state(self):
+        """Enable the submit button only when a dept, division and category are selected."""
+        try:
+            has_dept = bool(self.department_listbox.curselection())
+            has_div = bool(self.division_listbox.curselection())
+            has_cat = bool(self.category_listbox.curselection())
+            if hasattr(self, 'submit_button') and self.submit_button is not None:
+                if has_dept and has_div and has_cat:
+                    self.submit_button.state(['!disabled'])
+                else:
+                    self.submit_button.state(['disabled'])
+        except Exception:
+            pass
 
     def update_search_selections(self):
         """Handle search type change and update dropdown values"""
@@ -1960,21 +2232,59 @@ class AppTracker(tk.Tk):
                 self.current_parent_system_id = None
                 self.integrations_title.configure(text="System Sub/Integrations")
             
-            # Compute exact average integration risk for the selected system
-            avg_val = None
+            # Compute averages
+            avg_val = None                # system average (from displayed integrations)
+            division_avg_val = None       # division average
+            division_name = None
             try:
-                conn = database.connect_db()
-                cur = conn.cursor()
-                cur.execute('SELECT AVG(risk_score) FROM system_integrations WHERE parent_app_id = ?', (self.selected_app_id,))
-                row = cur.fetchone()
-                if row is not None:
+                # Determine division name
+                app_row_for_div = database.get_application(self.selected_app_id)
+                try:
+                    division_name = app_row_for_div['name'] if hasattr(app_row_for_div, 'keys') and 'name' in app_row_for_div.keys() else app_row_for_div[1]
+                except Exception:
+                    division_name = None
+
+                # Division average (DB query)
+                if division_name:
                     try:
-                        avg_val = float(row[0]) if row[0] is not None else None
+                        conn = database.connect_db()
+                        cur = conn.cursor()
+                        cur.execute('''SELECT AVG(si.risk_score)
+                                       FROM system_integrations si
+                                       JOIN applications a ON si.parent_app_id = a.id
+                                       WHERE a.division = ?''', (division_name,))
+                        row_div = cur.fetchone()
+                        if row_div is not None:
+                            division_avg_val = float(row_div[0]) if row_div[0] is not None else None
+                        conn.close()
                     except Exception:
-                        avg_val = None
-                conn.close()
+                        division_avg_val = None
+
+                # System average derived from currently displayed integrations (ensures it matches table)
+                try:
+                    # Ensure table is refreshed first so values are current
+                    self.refresh_integration_table()
+                    risk_values = []
+                    for iid in self.integrations_tree.get_children():
+                        vals = self.integrations_tree.item(iid, 'values')
+                        # Risk column is after name, vendor, and 9 rating columns => index 2 + 9 = 11
+                        # Columns order: name(0), vendor(1), 9 ratings (2-10), risk (11), last_mod(12)
+                        if len(vals) >= 12:
+                            risk_text = vals[11]
+                            if risk_text and '(' in risk_text:
+                                num_part = risk_text.split('(')[0].strip()
+                                try:
+                                    val_f = float(num_part)
+                                    risk_values.append(val_f)
+                                except ValueError:
+                                    pass
+                    if risk_values:
+                        avg_val = sum(risk_values) / len(risk_values)
+                except Exception:
+                    pass
             except Exception:
                 avg_val = None
+                division_avg_val = None
 
             # Determine band and tag for highlighting
             band = database.dr_priority_band(avg_val if avg_val is not None else 0)
@@ -1985,17 +2295,39 @@ class AppTracker(tk.Tk):
                 tag_name = get_risk_color(avg_val)
                 tag = f"risk_{tag_name}" if tag_name else 'risk_na'
 
-            # fetch notes from DB if possible
-            notes = None
-            if self.selected_app_id is not None:
-                app_row = database.get_application(self.selected_app_id)
-                if app_row is not None and len(app_row) > 12:
-                    notes = app_row[12]
+            # Division average highlighting
+            div_band = database.dr_priority_band(division_avg_val if division_avg_val is not None else 0)
+            div_tag = None
+            if division_avg_val is None or division_avg_val <= 0:
+                div_tag = 'risk_na'
+            else:
+                div_tag_name = get_risk_color(division_avg_val)
+                div_tag = f"risk_{div_tag_name}" if div_tag_name else 'risk_na'
 
-            # display average risk line followed by notes/default text
+            # fetch notes from DB for selected app/category
+            notes = None
+            if self.selected_app_id is not None and self.selected_category_name:
+                import sqlite3
+                conn = sqlite3.connect('business_apps.db')
+                c = conn.cursor()
+                c.execute('SELECT notes FROM category_notes WHERE app_id = ? AND category = ?', (self.selected_app_id, self.selected_category_name))
+                row = c.fetchone()
+                if row:
+                    notes = row[0]
+                conn.close()
+
+            # display division average and system average risk lines followed by notes/default text
             self.details_text.configure(state='normal')
             self.details_text.delete('1.0', 'end')
-            self.details_text.insert('end', 'Avg Integration Risk: ')
+            # Division line
+            self.details_text.insert('end', 'Avg Division Integration Risk: ')
+            if division_avg_val is None or division_avg_val <= 0:
+                self.details_text.insert('end', 'N/A', div_tag)
+            else:
+                self.details_text.insert('end', f"{division_avg_val:.1f}", div_tag)
+            self.details_text.insert('end', f" ({div_band})\n")
+            # System line (average of currently shown integrations)
+            self.details_text.insert('end', 'Avg System Integration Risk: ')
             if avg_val is None or avg_val <= 0:
                 self.details_text.insert('end', 'N/A', tag)
             else:
@@ -2005,6 +2337,7 @@ class AppTracker(tk.Tk):
             self.details_text.configure(state='disabled')
             
             # refresh integrations table
+            # Already refreshed earlier when computing system average; still call to keep behavior consistent
             self.refresh_integration_table()
             
         except Exception as e:
@@ -2012,8 +2345,8 @@ class AppTracker(tk.Tk):
 
     def create_note(self):
         # Allow appending a note for the currently selected app
-        if not hasattr(self, 'selected_app_id') or self.selected_app_id is None:
-            messagebox.showinfo('Create Note', 'Please select an application to create a note for.')
+        if not hasattr(self, 'selected_app_id') or self.selected_app_id is None or not self.selected_category_name:
+            messagebox.showinfo('Create Note', 'Please select a system and category to create a note for.')
             return
         try:
             self.details_text.configure(state='normal')
@@ -2031,15 +2364,31 @@ class AppTracker(tk.Tk):
 
     def save_notes(self):
         # Save notes text into DB for selected app
-        if not hasattr(self, 'selected_app_id') or self.selected_app_id is None:
-            messagebox.showinfo('Save Note', 'Please select an application to save notes for.')
+        if not hasattr(self, 'selected_app_id') or self.selected_app_id is None or not self.selected_category_name:
+            messagebox.showinfo('Save Note', 'Please select a system and category to save notes for.')
             return
         try:
-            notes_text = self.details_text.get('1.0', 'end').strip()
-            app_id = self.selected_app_id  # Store the app_id before refresh
-            
-            # Update notes via database helper
-            database.update_application(app_id, {'notes': notes_text})
+            raw_text = self.details_text.get('1.0', 'end').strip()
+            # Remove the first two dynamic risk lines if present
+            lines = raw_text.splitlines()
+            cleaned_lines = []
+            skip_prefixes = ['Avg Division Integration Risk:', 'Avg System Integration Risk:']
+            skipped = 0
+            for line in lines:
+                if any(line.startswith(p) for p in skip_prefixes) and skipped < 2:
+                    skipped += 1
+                    continue
+                cleaned_lines.append(line)
+            notes_text = '\n'.join(cleaned_lines).strip()
+            app_id = self.selected_app_id
+            category = self.selected_category_name
+            import sqlite3
+            conn = sqlite3.connect('business_apps.db')
+            c = conn.cursor()
+            c.execute('''INSERT INTO category_notes (app_id, category, notes) VALUES (?, ?, ?)
+                         ON CONFLICT(app_id, category) DO UPDATE SET notes=excluded.notes''', (app_id, category, notes_text))
+            conn.commit()
+            conn.close()
             
             # Make read-only again
             self.details_text.configure(state='disabled')
@@ -2049,10 +2398,13 @@ class AppTracker(tk.Tk):
             
             # Re-select the previously selected application
             for item in self.tree.get_children():
-                if int(item) == app_id:
-                    self.tree.selection_set(item)
-                    self.tree.see(item)  # Ensure the selected item is visible
-                    break
+                try:
+                    if int(item.split(':', 1)[0]) == app_id:
+                        self.tree.selection_set(item)
+                        self.tree.see(item)  # Ensure the selected item is visible
+                        break
+                except ValueError:
+                    continue
                     
             messagebox.showinfo('Saved', 'Notes saved.')
         except Exception as e:
@@ -2063,7 +2415,13 @@ class AppTracker(tk.Tk):
         try:
             # Store current selection to restore after sorting
             current_selection = self.tree.selection()
-            selected_ids = [int(item) for item in current_selection] if current_selection else []
+            selected_ids = []
+            if current_selection:
+                for item in current_selection:
+                    try:
+                        selected_ids.append(int(item.split(':', 1)[0]))
+                    except ValueError:
+                        continue
             
             # Get data for sorting
             data = [(self.tree.set(k, col), k) for k in self.tree.get_children('')]
@@ -2094,10 +2452,13 @@ class AppTracker(tk.Tk):
             # Restore selection if there was one
             if selected_ids:
                 for item in self.tree.get_children():
-                    if int(item) in selected_ids:
-                        self.tree.selection_add(item)
-                        self.tree.see(item)  # Make the first selected item visible
-                        break
+                    try:
+                        if int(item.split(':', 1)[0]) in selected_ids:
+                            self.tree.selection_add(item)
+                            self.tree.see(item)  # Make the first selected item visible
+                            break
+                    except ValueError:
+                        continue
                 
         except Exception as e:
             messagebox.showerror('Error', f'Failed to sort table: {e}')
@@ -2139,6 +2500,40 @@ class AppTracker(tk.Tk):
         for dept_id, dept_name in departments:
             self.department_listbox.insert('end', dept_name)
 
+    def refresh_division_listbox(self):
+        """Populate the division listbox with distinct divisions from applications table."""
+        if not hasattr(self, 'division_listbox'):
+            return
+        try:
+            import sqlite3
+            conn = sqlite3.connect('business_apps.db')
+            c = conn.cursor()
+            c.execute('SELECT DISTINCT division FROM applications WHERE division IS NOT NULL AND TRIM(division) != "" ORDER BY division')
+            divisions = [row[0] for row in c.fetchall() if row and row[0]]
+            conn.close()
+        except Exception:
+            divisions = []
+        # Preserve current selection text if possible
+        current_selection = None
+        try:
+            sel = self.division_listbox.curselection()
+            if sel:
+                current_selection = self.division_listbox.get(sel[0])
+        except Exception:
+            pass
+        self.division_listbox.delete(0, tk.END)
+        for d in divisions:
+            self.division_listbox.insert(tk.END, d)
+        if current_selection:
+            try:
+                for i in range(self.division_listbox.size()):
+                    if self.division_listbox.get(i) == current_selection:
+                        self.division_listbox.selection_set(i)
+                        self.division_listbox.see(i)
+                        break
+            except Exception:
+                pass
+
     def delete_selected_app(self):
         sel = self.tree.selection()
         if not sel:
@@ -2147,7 +2542,7 @@ class AppTracker(tk.Tk):
         item = sel[0]
         # get app id from iid
         try:
-            app_id = int(item)
+            app_id = int(item.split(':', 1)[0])
         except Exception:
             messagebox.showerror('Delete', 'Could not determine application id for selected row.')
             return
@@ -2266,10 +2661,62 @@ class AppTracker(tk.Tk):
                 # Submit integration to database
                 integration_id = database.add_system_integration(self.current_parent_system_id, fields)
                 if integration_id:
+                    # Update parent application's last_modified so main table timestamp reflects new integration
+                    try:
+                        if self.current_parent_system_id:
+                            database.touch_application(self.current_parent_system_id)
+                    except Exception:
+                        pass
+                    selected_cat = getattr(self, 'selected_category_name', None)
+                    # If a category is currently selected in the main table, link this integration to that category
+                    if selected_cat:
+                        try:
+                            conn_link = database.connect_db()
+                            cur_link = conn_link.cursor()
+                            # Look up category id by name (case-insensitive)
+                            cur_link.execute('SELECT id FROM categories WHERE LOWER(TRIM(name)) = LOWER(TRIM(?))', (selected_cat,))
+                            row_cat = cur_link.fetchone()
+                            if row_cat and row_cat[0]:
+                                cat_id = row_cat[0]
+                                # Ensure integration_categories table exists then insert link
+                                cur_link.execute('''CREATE TABLE IF NOT EXISTS integration_categories (
+                                    integration_id INTEGER NOT NULL,
+                                    category_id INTEGER NOT NULL,
+                                    PRIMARY KEY (integration_id, category_id),
+                                    FOREIGN KEY (integration_id) REFERENCES system_integrations(id) ON DELETE CASCADE,
+                                    FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
+                                )''')
+                                cur_link.execute('INSERT OR IGNORE INTO integration_categories (integration_id, category_id) VALUES (?, ?)', (integration_id, cat_id))
+                                conn_link.commit()
+                            conn_link.close()
+                        except Exception as link_ex:
+                            if VERBOSE_LOG:
+                                print(f"DEBUG: Failed to link integration {integration_id} to category '{selected_cat}': {link_ex}")
                     messagebox.showinfo('Success', 'System integration submitted successfully')
                     dialog.destroy()
                     # Refresh the integrations table
                     self.refresh_integration_table()
+                    # Refresh main applications table to update averages / last_modified
+                    try:
+                        # Remember current composite iid (appId:category)
+                        remember_iid = None
+                        if hasattr(self, 'selected_app_id') and self.selected_app_id is not None:
+                            remember_iid = f"{self.selected_app_id}:{selected_cat or ''}"
+                        self.refresh_table()
+                        # Reselect the previously selected row so context/details persist
+                        if remember_iid and remember_iid in self.tree.get_children(''):
+                            try:
+                                self.tree.selection_set(remember_iid)
+                                self.tree.focus(remember_iid)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    # Recompute averages / details after refresh
+                    try:
+                        self.on_tree_select(None)
+                    except Exception:
+                        pass
                 else:
                     messagebox.showerror('Error', 'Failed to submit system integration')
             except Exception as e:
@@ -3336,11 +3783,21 @@ class AppTracker(tk.Tk):
             self.department_listbox.delete(0, 'end')  # Clear and refresh department listbox
             for dept_id, dept_name in self.get_departments():
                 self.department_listbox.insert('end', dept_name)
+            # Refresh divisions
+            try:
+                self.refresh_division_listbox()
+            except Exception as e:
+                print(f"DEBUG: Error refreshing division listbox: {e}")
             # Refresh categories so new CSV categories appear immediately
             try:
                 self.populate_category_listbox()
             except Exception as e:
                 print(f"DEBUG: Error refreshing category listbox: {e}")
+            # Update submit button state in case selections changed/are now available
+            try:
+                self.update_submit_button_state()
+            except Exception:
+                pass
             
         try:
             self._import_progress_win = None
@@ -3575,7 +4032,10 @@ class AppTracker(tk.Tk):
         item = sel[0]
         try:
             # Get the system ID and set it as current parent
-            self.current_parent_system_id = int(item)
+            try:
+                self.current_parent_system_id = int(item.split(':', 1)[0])
+            except ValueError:
+                raise ValueError(f"Invalid system id format: {item}")
             
             # Load integrations for this system
             self.refresh_integration_table()
@@ -3637,9 +4097,6 @@ class AppTracker(tk.Tk):
             
         try:
             selected_cat = getattr(self, 'selected_category_name', None)
-            # Strict mode: if no category selected, show nothing
-            if not selected_cat:
-                return
             conn = database.connect_db()
             cur = conn.cursor()
             integrations = []
@@ -3651,16 +4108,23 @@ class AppTracker(tk.Tk):
                     FOREIGN KEY (integration_id) REFERENCES system_integrations(id) ON DELETE CASCADE,
                     FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE CASCADE
                 )''')
-                cur.execute('''
-                    SELECT si.* FROM system_integrations si
-                    JOIN integration_categories ic ON si.id = ic.integration_id
-                    JOIN categories c ON ic.category_id = c.id
-                    WHERE si.parent_app_id = ? AND LOWER(TRIM(c.name)) = LOWER(TRIM(?))
-                    ORDER BY si.name
-                ''', (parent_id, selected_cat))
+                if selected_cat:  # Filtered by selected category
+                    cur.execute('''
+                        SELECT si.* FROM system_integrations si
+                        JOIN integration_categories ic ON si.id = ic.integration_id
+                        JOIN categories c ON ic.category_id = c.id
+                        WHERE si.parent_app_id = ? AND LOWER(TRIM(c.name)) = LOWER(TRIM(?))
+                        ORDER BY si.name
+                    ''', (parent_id, selected_cat))
+                else:  # No category selected -> show all integrations for the parent
+                    cur.execute('''
+                        SELECT si.* FROM system_integrations si
+                        WHERE si.parent_app_id = ?
+                        ORDER BY si.name
+                    ''', (parent_id,))
                 integrations = cur.fetchall()
             except Exception as fe:
-                print(f"DEBUG: Strict category-filtered integration query failed: {fe}")
+                print(f"DEBUG: Integration query failed: {fe}")
             conn.close()
             
             for row in integrations:

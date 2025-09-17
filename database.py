@@ -28,6 +28,7 @@ __all__ = [
     'link_app_to_categories',
     'set_app_categories',
     'clear_app_categories',
+    'touch_application',
 ]
 
 def get_system_integrations(parent_app_id=None):
@@ -279,6 +280,15 @@ def initialize_database():
     if last_error:
         raise last_error
 
+def _now_ts():
+    """Return a normalized local timestamp string (YYYY-MM-DD HH:MM:SS)."""
+    try:
+        return datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    except Exception:
+        # Fallback to UTC iso without microseconds
+        return datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+
+
 def add_application(division, vendor, factors, dept_ids, notes=None):
     """Add a new application (Division) with the given attributes."""
     conn = connect_db()
@@ -288,7 +298,8 @@ def add_application(division, vendor, factors, dept_ids, notes=None):
         c.execute("PRAGMA table_info(applications)")
         app_cols = [row[1] for row in c.fetchall()]
         has_legacy_name = 'name' in app_cols
-        now = datetime.utcnow().isoformat()
+        # Use local wall-clock time for display consistency in UI
+        now = _now_ts()
         if has_legacy_name:
             # Insert both division and legacy name for compatibility (legacy 'name' may be NOT NULL)
             c.execute('''INSERT INTO applications 
@@ -340,7 +351,7 @@ def add_system_integration(parent_app_id, fields):
     conn = connect_db()
     c = conn.cursor()
     try:
-        now = datetime.utcnow().isoformat()
+        now = _now_ts()
         c.execute('''INSERT INTO system_integrations 
                     (parent_app_id, name, vendor, score, need, criticality, installed,
                      disaster_recovery, safety, security, monetary, customer_service,
@@ -404,7 +415,7 @@ def update_system_integration(integration_id, fields):
 
     # Always update last_modified
     set_parts.append('last_modified = ?')
-    values.append(datetime.utcnow().isoformat())
+    values.append(_now_ts())
     values.append(integration_id)
 
     sql = f"UPDATE system_integrations SET {', '.join(set_parts)} WHERE id = ?"
@@ -600,7 +611,7 @@ def update_application(app_id, fields: Dict[str, object]):
         c = conn.cursor()
         # Always update last_modified
         set_parts.append('last_modified = ?')
-        values.append(datetime.utcnow().isoformat())
+        values.append(_now_ts())
         values.append(app_id)
         
         c.execute(f'''UPDATE applications SET {', '.join(set_parts)}
@@ -721,6 +732,18 @@ def clear_app_categories(app_id: int):
     c = conn.cursor()
     try:
         c.execute('DELETE FROM application_categories WHERE app_id = ?', (app_id,))
+        conn.commit()
+    finally:
+        conn.close()
+
+def touch_application(app_id: int):
+    """Update the last_modified timestamp for an application."""
+    if not app_id:
+        return
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        c.execute('UPDATE applications SET last_modified = ? WHERE id = ?', (_now_ts(), app_id))
         conn.commit()
     finally:
         conn.close()
