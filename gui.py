@@ -911,6 +911,356 @@ class AppTracker(tk.Tk):
         # Add Refresh button now that update_risk_table is defined
         ttk.Button(controls_frame, text='Refresh', command=update_risk_table, style='Primary.TButton').pack(side='left', padx=5)
 
+        # Export to XLSX functionality
+        # Simple toast notification at bottom of report window
+        def _show_toast(msg: str):
+            try:
+                toast = tk.Toplevel(report_win)
+                toast.overrideredirect(True)
+                toast.configure(bg='#222222')
+                tk.Label(toast, text=msg, bg='#222222', fg='white', font=('Segoe UI', 9)).pack(padx=14, pady=8)
+                # Position bottom-right of report window
+                report_win.update_idletasks()
+                x = report_win.winfo_rootx() + report_win.winfo_width() - 260
+                y = report_win.winfo_rooty() + report_win.winfo_height() - 90
+                toast.geometry(f"250x40+{x}+{y}")
+                # Fade out after delay
+                def _fade(step=0):
+                    try:
+                        if step > 10:
+                            toast.destroy()
+                            return
+                        toast.attributes('-alpha', max(0, 1 - step*0.1))
+                        toast.after(60, _fade, step+1)
+                    except Exception:
+                        pass
+                toast.after(1800, _fade)
+            except Exception:
+                pass
+
+        def export_risk_report():
+            try:
+                # Collect current rows from treeview in appearance order
+                rows = []
+                for item_id in risk_tree.get_children():
+                    vals = risk_tree.item(item_id, 'values')
+                    # Expect order: Business Unit, Division, Integration Name, Vendor, Score, Criticality, Risk, Notes
+                    rows.append(vals)
+                if not rows:
+                    messagebox.showinfo("Export", "No data to export.")
+                    return
+                try:
+                    from openpyxl import Workbook
+                    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+                except ImportError:
+                    messagebox.showerror("Missing Dependency", "openpyxl is required. Please install with pip install openpyxl")
+                    return
+
+                wb = Workbook()
+                # Annotate worksheet as Any to satisfy static analysis if openpyxl types unavailable
+                from typing import Any
+                ws: Any = wb.active  # type: ignore
+                ws.title = "Risk Range"
+
+                # Styles
+                header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+                bu_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+                div_fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
+                high_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")  # red
+                med_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")   # yellow
+                low_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")   # green
+                header_font = Font(bold=True, color="FFFFFF")
+                bold_font = Font(bold=True)
+                center = Alignment(horizontal="center")
+                thin = Side(style='thin', color='888888')
+                border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+                # Write report metadata
+                ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
+                title_cell = ws.cell(row=1, column=1, value=f"Integrations by Risk Range Export - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                title_cell.font = Font(bold=True, size=14)
+                title_cell.alignment = Alignment(horizontal='center')
+
+                # Header row
+                headers = ["Business Unit", "Division", "Integration Name", "Vendor", "Score", "Criticality", "Risk", "Notes"]
+                for col, h in enumerate(headers, start=1):
+                    cell = ws.cell(row=3, column=col, value=h)
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = center
+                    cell.border = border
+
+                # Group rows by Business Unit then Division
+                from collections import defaultdict
+                grouped = defaultdict(lambda: defaultdict(list))
+                for (bu, division, name, vendor, score, crit, risk, notes) in rows:
+                    grouped[bu][division].append((name, vendor, score, crit, risk, notes))
+
+                current_row = 4
+                for bu in sorted(grouped.keys()):
+                    # Business Unit header row
+                    ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=8)
+                    bu_cell = ws.cell(row=current_row, column=1, value=f"Business Unit: {bu}")
+                    bu_cell.font = bold_font
+                    bu_cell.fill = bu_fill
+                    bu_cell.border = border
+                    current_row += 1
+                    for division in sorted(grouped[bu].keys()):
+                        # Division header
+                        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=8)
+                        div_cell = ws.cell(row=current_row, column=1, value=f"Division: {division}")
+                        div_cell.font = bold_font
+                        div_cell.fill = div_fill
+                        div_cell.border = border
+                        current_row += 1
+                        # Data rows
+                        for (name, vendor, score, crit, risk, notes) in grouped[bu][division]:
+                            row_vals = [bu, division, name, vendor, score, crit, risk, notes]
+                            for col, val in enumerate(row_vals, start=1):
+                                cell = ws.cell(row=current_row, column=col, value=val)
+                                cell.border = border
+                                # Apply risk based coloring on entire data row based on risk value
+                                if col == 7:  # risk column used for color selection
+                                    try:
+                                        rv = float(val) if val not in (None, "") else 0
+                                    except Exception:
+                                        rv = 0
+                                    if rv >= 70:
+                                        fill = high_fill
+                                    elif rv >= 50:
+                                        fill = med_fill
+                                    else:
+                                        fill = low_fill
+                                    # Apply fill to all cells in this row
+                                    for cc in range(1, 9):
+                                        ws.cell(row=current_row, column=cc).fill = fill
+                            current_row += 1
+                        # Blank row after division
+                        current_row += 1
+                    # Extra blank after BU
+                    current_row += 1
+
+                # Auto-size columns (basic heuristic)
+                for col in range(1, 9):
+                    max_len = 0
+                    for r in range(1, current_row):
+                        val = ws.cell(row=r, column=col).value
+                        if val is None:
+                            continue
+                        vlen = len(str(val))
+                        if vlen > max_len:
+                            max_len = vlen
+                    ws.column_dimensions[chr(64+col)].width = min(max_len + 2, 60)
+
+                # Ask user for destination path
+                from tkinter import filedialog
+                default_name = f"risk_range_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                file_path = filedialog.asksaveasfilename(defaultextension=".xlsx", initialfile=default_name, filetypes=[("Excel Workbook", "*.xlsx")])
+                if not file_path:
+                    return
+                try:
+                    wb.save(file_path)
+                    _show_toast("Risk Range export saved")
+                except Exception as e:
+                    messagebox.showerror("Export Failed", f"Could not save file: {e}")
+            except Exception as e:
+                print(f"Export error: {e}")
+                messagebox.showerror("Export Failed", f"Unexpected error: {e}")
+
+        ttk.Button(controls_frame, text='Export XLSX', command=export_risk_report).pack(side='left', padx=5)
+
+        def export_all_reports():
+            """Create one workbook with three sheets: Risk Range (current filter), Business Unit Risk, Division Risk."""
+            try:
+                try:
+                    from openpyxl import Workbook
+                    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+                except ImportError:
+                    messagebox.showerror("Missing Dependency", "openpyxl is required. Please install with pip install openpyxl")
+                    return
+                wb = Workbook()
+                from typing import Any
+                # Common styles
+                header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+                header_font = Font(bold=True, color="FFFFFF")
+                center = Alignment(horizontal='center')
+                thin = Side(style='thin', color='888888')
+                border = Border(left=thin, right=thin, top=thin, bottom=thin)
+                high_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+                med_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+                low_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+
+                # --- Risk Range Sheet (with grouping) ---
+                ws_risk: Any = wb.active  # type: ignore
+                ws_risk.title = "Risk Range"
+                rows_risk = []
+                for iid in risk_tree.get_children():
+                    rows_risk.append(risk_tree.item(iid, 'values'))
+                from collections import defaultdict
+                bu_fill = PatternFill(start_color="D9E1F2", end_color="D9E1F2", fill_type="solid")
+                div_fill = PatternFill(start_color="FCE4D6", end_color="FCE4D6", fill_type="solid")
+                ws_risk.merge_cells(start_row=1, start_column=1, end_row=1, end_column=8)
+                tcell = ws_risk.cell(row=1, column=1, value=f"Risk Range (Filter: {risk_var.get()}) - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                tcell.font = Font(bold=True, size=14)
+                tcell.alignment = Alignment(horizontal='center')
+                risk_headers = ["Business Unit", "Division", "Integration Name", "Vendor", "Score", "Criticality", "Risk", "Notes"]
+                for c, h in enumerate(risk_headers, start=1):
+                    hc = ws_risk.cell(row=3, column=c, value=h)
+                    hc.fill = header_fill
+                    hc.font = header_font
+                    hc.alignment = center
+                    hc.border = border
+                grouped = defaultdict(lambda: defaultdict(list))
+                for (bu, division, name, vendor, score, crit, risk, notes) in rows_risk:
+                    grouped[bu][division].append((name, vendor, score, crit, risk, notes))
+                r = 4
+                bold_font = Font(bold=True)
+                for bu in sorted(grouped.keys()):
+                    ws_risk.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+                    bc = ws_risk.cell(row=r, column=1, value=f"Business Unit: {bu}")
+                    bc.font = bold_font
+                    bc.fill = bu_fill
+                    bc.border = border
+                    r += 1
+                    for division in sorted(grouped[bu].keys()):
+                        ws_risk.merge_cells(start_row=r, start_column=1, end_row=r, end_column=8)
+                        dc = ws_risk.cell(row=r, column=1, value=f"Division: {division}")
+                        dc.font = bold_font
+                        dc.fill = div_fill
+                        dc.border = border
+                        r += 1
+                        for (name, vendor, score, crit, risk, notes) in grouped[bu][division]:
+                            rowvals = [bu, division, name, vendor, score, crit, risk, notes]
+                            for c, val in enumerate(rowvals, start=1):
+                                cell = ws_risk.cell(row=r, column=c, value=val)
+                                cell.border = border
+                            try:
+                                rv = float(risk) if risk not in (None, "") else 0
+                            except Exception:
+                                rv = 0
+                            fill = high_fill if rv >= 70 else med_fill if rv >= 50 else low_fill
+                            for cc in range(1, 9):
+                                ws_risk.cell(row=r, column=cc).fill = fill
+                            r += 1
+                        r += 1  # blank after division
+                    r += 1      # extra after BU
+                # Autosize
+                for c in range(1, 9):
+                    mlen = 0
+                    for rr in range(1, r):
+                        v = ws_risk.cell(row=rr, column=c).value
+                        if v is None:
+                            continue
+                        l = len(str(v))
+                        if l > mlen:
+                            mlen = l
+                    ws_risk.column_dimensions[chr(64+c)].width = min(mlen + 2, 60)
+
+                # --- Business Unit Sheet ---
+                ws_bu = wb.create_sheet("Business Units")
+                ws_bu.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+                tb = ws_bu.cell(row=1, column=1, value=f"Business Unit Risk - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                tb.font = Font(bold=True, size=14)
+                tb.alignment = Alignment(horizontal='center')
+                bu_headers = ["Business Unit", "App Count", "Avg Risk", "Status"]
+                for c, h in enumerate(bu_headers, start=1):
+                    hc = ws_bu.cell(row=3, column=c, value=h)
+                    hc.fill = header_fill
+                    hc.font = header_font
+                    hc.alignment = center
+                    hc.border = border
+                br = 4
+                for iid in bu_tree.get_children():
+                    bu_name, app_count, avg_risk, status = bu_tree.item(iid, 'values')
+                    rowvals = [bu_name, app_count, avg_risk, status]
+                    for c, val in enumerate(rowvals, start=1):
+                        cell = ws_bu.cell(row=br, column=c, value=val)
+                        cell.border = border
+                    try:
+                        rv = float(avg_risk) if avg_risk not in (None, '', '0') else 0
+                    except Exception:
+                        rv = 0
+                    fill = None
+                    if rv >= 70:
+                        fill = high_fill
+                    elif rv >= 50:
+                        fill = med_fill
+                    elif rv > 0:
+                        fill = low_fill
+                    if fill:
+                        for cc in range(1, 5):
+                            ws_bu.cell(row=br, column=cc).fill = fill
+                    br += 1
+                for c in range(1, 5):
+                    mlen = 0
+                    for rr in range(1, br):
+                        v = ws_bu.cell(row=rr, column=c).value
+                        if v is None:
+                            continue
+                        l = len(str(v))
+                        if l > mlen:
+                            mlen = l
+                    ws_bu.column_dimensions[chr(64+c)].width = min(mlen + 2, 50)
+
+                # --- Division Sheet ---
+                ws_div = wb.create_sheet("Divisions")
+                ws_div.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+                td = ws_div.cell(row=1, column=1, value=f"Division Risk - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                td.font = Font(bold=True, size=14)
+                td.alignment = Alignment(horizontal='center')
+                div_headers = ["Division", "App Count", "Avg Risk", "Status"]
+                for c, h in enumerate(div_headers, start=1):
+                    hc = ws_div.cell(row=3, column=c, value=h)
+                    hc.fill = header_fill
+                    hc.font = header_font
+                    hc.alignment = center
+                    hc.border = border
+                dr = 4
+                for iid in div_tree.get_children():
+                    division, app_count, avg_risk, status = div_tree.item(iid, 'values')
+                    rowvals = [division, app_count, avg_risk, status]
+                    for c, val in enumerate(rowvals, start=1):
+                        cell = ws_div.cell(row=dr, column=c, value=val)
+                        cell.border = border
+                    try:
+                        rv = float(avg_risk) if avg_risk not in (None, '', '0') else 0
+                    except Exception:
+                        rv = 0
+                    fill = None
+                    if rv >= 70:
+                        fill = high_fill
+                    elif rv >= 50:
+                        fill = med_fill
+                    elif rv > 0:
+                        fill = low_fill
+                    if fill:
+                        for cc in range(1, 5):
+                            ws_div.cell(row=dr, column=cc).fill = fill
+                    dr += 1
+                for c in range(1, 5):
+                    mlen = 0
+                    for rr in range(1, dr):
+                        v = ws_div.cell(row=rr, column=c).value
+                        if v is None:
+                            continue
+                        l = len(str(v))
+                        if l > mlen:
+                            mlen = l
+                    ws_div.column_dimensions[chr(64+c)].width = min(mlen + 2, 50)
+
+                # Save file
+                from tkinter import filedialog
+                default_name = f"all_reports_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                path = filedialog.asksaveasfilename(defaultextension='.xlsx', initialfile=default_name, filetypes=[('Excel Workbook','*.xlsx')])
+                if not path:
+                    return
+                wb.save(path)
+                _show_toast("All reports exported")
+            except Exception as e:
+                messagebox.showerror("Export Failed", f"Multi-sheet export failed: {e}")
+
+        ttk.Button(controls_frame, text='Export All (Multi-Sheet)', command=export_all_reports).pack(side='left', padx=5)
+
         # Bind the update function to combobox selection
         risk_var.trace('w', update_risk_table)
 
@@ -1045,6 +1395,84 @@ class AppTracker(tk.Tk):
         div_controls = ttk.Frame(div_frame)
         div_controls.pack(fill='x', padx=15, pady=(0, 5))
         ttk.Button(div_controls, text='Refresh', command=update_div_table, style='Primary.TButton').pack(side='left')
+        def export_division_report():
+            try:
+                # Gather current division table rows
+                rows = []
+                for iid in div_tree.get_children():
+                    rows.append(div_tree.item(iid, 'values'))  # Division, App Count, Avg Risk, Status
+                if not rows:
+                    messagebox.showinfo("Export", "No division data to export.")
+                    return
+                try:
+                    from openpyxl import Workbook
+                    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+                except ImportError:
+                    messagebox.showerror("Missing Dependency", "openpyxl is required. Please install with pip install openpyxl")
+                    return
+                wb = Workbook()
+                from typing import Any
+                ws: Any = wb.active  # type: ignore
+                ws.title = "Division Risk"
+                header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+                header_font = Font(bold=True, color="FFFFFF")
+                center = Alignment(horizontal='center')
+                thin = Side(style='thin', color='888888')
+                border = Border(left=thin, right=thin, top=thin, bottom=thin)
+                ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+                title = ws.cell(row=1, column=1, value=f"Division Risk Overview - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                title.font = Font(bold=True, size=14)
+                title.alignment = Alignment(horizontal='center')
+                headers = ["Division", "App Count", "Avg Risk", "Status"]
+                for col, h in enumerate(headers, start=1):
+                    ccell = ws.cell(row=3, column=col, value=h)
+                    ccell.fill = header_fill
+                    ccell.font = header_font
+                    ccell.alignment = center
+                    ccell.border = border
+                row_idx = 4
+                for (division, app_count, avg_risk, status) in rows:
+                    data = [division, app_count, avg_risk, status]
+                    for col, val in enumerate(data, start=1):
+                        cell = ws.cell(row=row_idx, column=col, value=val)
+                        cell.border = border
+                    try:
+                        rv = float(avg_risk) if avg_risk not in (None, '', '0') else 0
+                    except Exception:
+                        rv = 0
+                    from openpyxl.styles import PatternFill
+                    if rv >= 70:
+                        fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+                    elif rv >= 50:
+                        fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+                    elif rv > 0:
+                        fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+                    else:
+                        fill = None
+                    if fill:
+                        for c in range(1, 5):
+                            ws.cell(row=row_idx, column=c).fill = fill
+                    row_idx += 1
+                for col in range(1, 5):
+                    max_len = 0
+                    for r in range(1, row_idx):
+                        val = ws.cell(row=r, column=col).value
+                        if val is None:
+                            continue
+                        l = len(str(val))
+                        if l > max_len:
+                            max_len = l
+                    ws.column_dimensions[chr(64+col)].width = min(max_len + 2, 50)
+                from tkinter import filedialog
+                default_name = f"division_risk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                path = filedialog.asksaveasfilename(defaultextension='.xlsx', initialfile=default_name, filetypes=[('Excel Workbook','*.xlsx')])
+                if not path:
+                    return
+                wb.save(path)
+                _show_toast("Division export saved")
+            except Exception as e:
+                messagebox.showerror("Export Failed", f"Division export failed: {e}")
+        ttk.Button(div_controls, text='Export XLSX', command=export_division_report).pack(side='left', padx=5)
         div_last_lbl = ttk.Label(div_controls, text='Last refresh: N/A')
         div_last_lbl.pack(side='left', padx=(8,0))
         # Register DIV label widget for elapsed updates
@@ -1060,68 +1488,11 @@ class AppTracker(tk.Tk):
         # Initial population
         update_div_table()
         
-        # System Criticality Tab
-        crit_frame = ttk.Frame(notebook)
-        notebook.add(crit_frame, text='System Criticality')
-        # Ensure Risk Range is shown by default (top-most view)
+        # Ensure Risk Range tab stays selected by default now that System Criticality is removed
         try:
             notebook.select(risk_frame)
         except Exception:
             pass
-        
-        # Add header to criticality report
-        crit_header = tk.Frame(crit_frame, bg=WIN_BG)
-        crit_header.pack(fill='x', pady=(10, 15))
-        crit_label = tk.Label(crit_header, text='System Criticality Overview', 
-                            font=('Segoe UI', 14, 'bold'), fg=ACCENT, bg=WIN_BG)
-        crit_label.pack(side='left', padx=15)
-        
-        # Controls frame for criticality visualization
-        controls_frame = ttk.Frame(crit_frame)
-        controls_frame.pack(fill='x', padx=15, pady=5)
-        
-        # Sort options
-        ttk.Label(controls_frame, text="Sort by:").pack(side='left', padx=5)
-        sort_var = tk.StringVar(value="Criticality")
-        sort_options = ttk.Combobox(controls_frame, textvariable=sort_var, values=["Criticality", "Risk Score", "System Name"])
-        sort_options.pack(side='left', padx=5)
-        
-        # Button to refresh visualization (wrapped to also update last-refresh label)
-        def _refresh_crit():
-            try:
-                self.update_criticality_chart(chart_frame, sort_var.get())
-            finally:
-                # Update in-memory timestamp and label
-                try:
-                    state = self._report_refresh_state.get('crit')
-                    if state is None:
-                        # crit_last_lbl may not yet be bound in closure when this is first defined; handle later
-                        self._report_refresh_state['crit'] = {'label': None, 'ts': datetime.now()}
-                    else:
-                        state['ts'] = datetime.now()
-                    _update_report_label('crit')
-                except Exception:
-                    pass
-
-        refresh_btn = ttk.Button(controls_frame, text="Refresh", 
-                               command=_refresh_crit,
-                               style='Primary.TButton')
-        refresh_btn.pack(side='left', padx=5)
-        crit_last_lbl = ttk.Label(controls_frame, text='Last refresh: N/A')
-        crit_last_lbl.pack(side='left', padx=(8,0))
-        # Register crit label widget
-        try:
-            st = self._report_refresh_state.get('crit')
-            if st is None:
-                self._report_refresh_state['crit'] = {'label': crit_last_lbl, 'ts': None}
-            else:
-                st['label'] = crit_last_lbl
-        except Exception:
-            pass
-        
-        # Frame for matplotlib chart
-        chart_frame = ttk.Frame(crit_frame)
-        chart_frame.pack(fill='both', expand=True, padx=15, pady=5)
         
         # Populate business unit data via a refreshable function
         def update_bu_table():
@@ -1188,6 +1559,83 @@ class AppTracker(tk.Tk):
         bu_controls = ttk.Frame(bu_frame)
         bu_controls.pack(fill='x', padx=15, pady=(0, 5))
         ttk.Button(bu_controls, text='Refresh', command=update_bu_table, style='Primary.TButton').pack(side='left')
+        def export_bu_report():
+            try:
+                rows = []
+                for iid in bu_tree.get_children():
+                    rows.append(bu_tree.item(iid, 'values'))  # BU, App Count, Avg Risk, Status
+                if not rows:
+                    messagebox.showinfo("Export", "No business unit data to export.")
+                    return
+                try:
+                    from openpyxl import Workbook
+                    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+                except ImportError:
+                    messagebox.showerror("Missing Dependency", "openpyxl is required. Please install with pip install openpyxl")
+                    return
+                wb = Workbook()
+                from typing import Any
+                ws: Any = wb.active  # type: ignore
+                ws.title = "Business Unit Risk"
+                header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+                header_font = Font(bold=True, color="FFFFFF")
+                center = Alignment(horizontal='center')
+                thin = Side(style='thin', color='888888')
+                border = Border(left=thin, right=thin, top=thin, bottom=thin)
+                ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+                title = ws.cell(row=1, column=1, value=f"Business Unit Risk Overview - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                title.font = Font(bold=True, size=14)
+                title.alignment = Alignment(horizontal='center')
+                headers = ["Business Unit", "App Count", "Avg Risk", "Status"]
+                for col, h in enumerate(headers, start=1):
+                    ccell = ws.cell(row=3, column=col, value=h)
+                    ccell.fill = header_fill
+                    ccell.font = header_font
+                    ccell.alignment = center
+                    ccell.border = border
+                row_idx = 4
+                for (bu_name, app_count, avg_risk, status) in rows:
+                    data = [bu_name, app_count, avg_risk, status]
+                    for col, val in enumerate(data, start=1):
+                        cell = ws.cell(row=row_idx, column=col, value=val)
+                        cell.border = border
+                    try:
+                        rv = float(avg_risk) if avg_risk not in (None, '', '0') else 0
+                    except Exception:
+                        rv = 0
+                    from openpyxl.styles import PatternFill
+                    if rv >= 70:
+                        fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+                    elif rv >= 50:
+                        fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+                    elif rv > 0:
+                        fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+                    else:
+                        fill = None
+                    if fill:
+                        for c in range(1, 5):
+                            ws.cell(row=row_idx, column=c).fill = fill
+                    row_idx += 1
+                for col in range(1, 5):
+                    max_len = 0
+                    for r in range(1, row_idx):
+                        val = ws.cell(row=r, column=col).value
+                        if val is None:
+                            continue
+                        l = len(str(val))
+                        if l > max_len:
+                            max_len = l
+                    ws.column_dimensions[chr(64+col)].width = min(max_len + 2, 50)
+                from tkinter import filedialog
+                default_name = f"business_unit_risk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                path = filedialog.asksaveasfilename(defaultextension='.xlsx', initialfile=default_name, filetypes=[('Excel Workbook','*.xlsx')])
+                if not path:
+                    return
+                wb.save(path)
+                _show_toast("Business Unit export saved")
+            except Exception as e:
+                messagebox.showerror("Export Failed", f"BU export failed: {e}")
+        ttk.Button(bu_controls, text='Export XLSX', command=export_bu_report).pack(side='left', padx=5)
         bu_last_lbl = ttk.Label(bu_controls, text='Last refresh: N/A')
         bu_last_lbl.pack(side='left', padx=(8,0))
         # Register BU label widget for elapsed updates
@@ -1208,8 +1656,7 @@ class AppTracker(tk.Tk):
         tree_style.configure('Treeview', rowheight=28, font=('Segoe UI', 9))
         tree_style.configure('Treeview.Heading', font=('Segoe UI', 10, 'bold'))
 
-        # Create initial criticality chart
-        self.update_criticality_chart(chart_frame, sort_var.get())
+    # System Criticality tab removed per requirement; associated chart not created
 
     # Remove stray close; connections are managed within update functions
 
