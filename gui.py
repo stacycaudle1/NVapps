@@ -1248,6 +1248,100 @@ class AppTracker(tk.Tk):
                             mlen = l
                     ws_div.column_dimensions[chr(64+c)].width = min(mlen + 2, 50)
 
+                # --- Summary Sheet (moved to last, enhanced) ---
+                try:
+                    ws_sum = wb.create_sheet("Summary")  # append at end
+                    ws_sum.merge_cells(start_row=1, start_column=1, end_row=1, end_column=5)
+                    scell = ws_sum.cell(row=1, column=1, value=f"Reports Summary - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                    scell.font = Font(bold=True, size=16, color="FFFFFF")
+                    scell.alignment = Alignment(horizontal='center')
+                    scell.fill = PatternFill(start_color="305496", end_color="305496", fill_type="solid")
+
+                    # Gather metrics including missing/zero and distribution
+                    total_integrations = 0
+                    risk_values = []  # non-zero
+                    zero_or_missing = 0
+                    for (bu, divisions) in grouped.items():
+                        for division, entries in divisions.items():
+                            for (_n, _v, _s, _c, risk_val, _notes) in entries:
+                                total_integrations += 1
+                                try:
+                                    rv = float(risk_val) if risk_val not in (None, '') else 0
+                                except Exception:
+                                    rv = 0
+                                if rv <= 0:
+                                    zero_or_missing += 1
+                                else:
+                                    risk_values.append(rv)
+                    unique_bu = len(grouped.keys())
+                    unique_divisions = sum(len(divisions.keys()) for divisions in grouped.values())
+                    avg_risk_overall = round(sum(risk_values)/len(risk_values), 2) if risk_values else 0
+                    high_count = len([v for v in risk_values if v >= 70])
+                    med_count = len([v for v in risk_values if 50 <= v < 70])
+                    low_count = len([v for v in risk_values if 1 <= v < 50])
+                    dist_total = max(len(risk_values), 1)  # avoid div by zero (exclude zero/missing from distribution)
+                    high_pct = f"{(high_count/dist_total)*100:.1f}%" if dist_total else '0.0%'
+                    med_pct = f"{(med_count/dist_total)*100:.1f}%" if dist_total else '0.0%'
+                    low_pct = f"{(low_count/dist_total)*100:.1f}%" if dist_total else '0.0%'
+                    zero_pct = f"{(zero_or_missing/max(total_integrations,1))*100:.1f}%" if total_integrations else '0.0%'
+
+                    summary_rows = [
+                        ("Total Business Units", unique_bu, ''),
+                        ("Total Divisions", unique_divisions, ''),
+                        ("Total Integrations (visible)", total_integrations, ''),
+                        ("Integrations With Missing/Zero Risk", zero_or_missing, zero_pct),
+                        ("Avg Integration Risk (non-zero)", avg_risk_overall, ''),
+                        ("High Risk Integrations (≥70)", high_count, high_pct),
+                        ("Medium Risk Integrations (50–69)", med_count, med_pct),
+                        ("Low Risk Integrations (1–49)", low_count, low_pct),
+                    ]
+
+                    # Headers
+                    headers = ["Metric", "Value", "% of Non-Zero" ]
+                    for c, h in enumerate(headers, start=1):
+                        hc = ws_sum.cell(row=3, column=c, value=h)
+                        hc.fill = header_fill
+                        hc.font = header_font
+                        hc.alignment = Alignment(horizontal='center')
+                        hc.border = border
+
+                    sr = 4
+                    for metric, val, pct in summary_rows:
+                        c1 = ws_sum.cell(row=sr, column=1, value=metric)
+                        c2 = ws_sum.cell(row=sr, column=2, value=val)
+                        c3 = ws_sum.cell(row=sr, column=3, value=pct)
+                        for cc in (c1, c2, c3):
+                            cc.border = border
+                            # Center the Value and Percentage columns
+                            if cc.column in (2, 3):
+                                cc.alignment = Alignment(horizontal='center')
+                        # Color bands for risk distribution rows (apply to entire row)
+                        fill_to_apply = None
+                        if 'High Risk' in metric:
+                            fill_to_apply = high_fill
+                        elif 'Medium Risk' in metric:
+                            fill_to_apply = med_fill
+                        elif 'Low Risk' in metric:
+                            fill_to_apply = low_fill
+                        elif 'Missing/Zero' in metric:
+                            fill_to_apply = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+                        if fill_to_apply:
+                            for cc_idx in range(1, 4):
+                                ws_sum.cell(row=sr, column=cc_idx).fill = fill_to_apply
+                        sr += 1
+
+                    # Totals emphasis (first three rows)
+                    for r_emph in range(4, 7):
+                        ws_sum.cell(row=r_emph, column=1).font = Font(bold=True)
+                        ws_sum.cell(row=r_emph, column=2).font = Font(bold=True)
+
+                    # Column widths
+                    ws_sum.column_dimensions['A'].width = 50
+                    ws_sum.column_dimensions['B'].width = 18
+                    ws_sum.column_dimensions['C'].width = 18
+                except Exception:
+                    pass
+
                 # Save file
                 from tkinter import filedialog
                 default_name = f"all_reports_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
@@ -1756,38 +1850,39 @@ class AppTracker(tk.Tk):
         
         # Create a second tab as a placeholder
         self.tab_reports = ttk.Frame(self.tab_control, style='TFrame')
-        self.tab_control.add(self.tab_reports, text="Reports")
+        self.tab_control.add(self.tab_reports, text="Admin")
         
         # Create a container for the top section of the Reports tab
         reports_top_frame = ttk.Frame(self.tab_reports)
         reports_top_frame.pack(fill='x', pady=10, padx=15)
-        
-        # Add Show Report button to the top left of the Reports tab, and a Print Reports button beneath it
-        left_btns_frame = ttk.Frame(reports_top_frame)
-        left_btns_frame.pack(side='left')
-        # Both buttons share the same style and width for consistent appearance
-        btn_width = 18
-        show_report_btn = ttk.Button(left_btns_frame, text='Show Report', command=self.show_report, style='Primary.TButton', width=btn_width)
-        show_report_btn.pack(side='top', padx=0, pady=(0,6))
 
-        # Add button to generate smoke test data for reports (moved to Risk tab top-right)
-        def on_generate_smoke():
-            try:
-                database.generate_smoke_test_data()
-                messagebox.showinfo('Smoke Test Data', 'Sample data generated for reports.')
-                self.refresh_table()
-            except Exception as e:
-                messagebox.showerror('Error', f'Failed to generate smoke test data: {e}')
-        
+        # Previously had a 'Generate Smoke Test Data' helper here; removed per request.
+
         # Add some placeholder content to the Reports tab
-        reports_label = tk.Label(self.tab_reports, text="Reports Dashboard", 
-                               font=('Segoe UI', 16, 'bold'), fg=ACCENT, bg=WIN_BG)
-        reports_label.pack(pady=20)
-        
-        info_label = tk.Label(self.tab_reports, text="Click 'Show Report' to view the Business Unit Risk Report.",
+        reports_label = tk.Label(self.tab_reports, text="Admin Dashboard", 
+                                font=('Segoe UI', 16, 'bold'), fg=ACCENT, bg=WIN_BG)
+        reports_label.pack(pady=6)
+        # Centered Purge Database button
+        try:
+            purge_center = ttk.Frame(self.tab_reports)
+            purge_center.pack(fill='x')
+            purge_btn = ttk.Button(purge_center, text='Purge Database', command=self.purge_database_gui, style='Danger.TButton')
+            purge_btn.pack(pady=6)
+        except Exception:
+            pass
+
+        info_label = tk.Label(self.tab_reports, text="",
                             font=('Segoe UI', 12), fg='#555555', bg=WIN_BG)
         info_label.pack(pady=10)
-        
+
+        # Add a small header area to the System Risk Assessment tab for actions (top-right)
+        risk_header_frame = ttk.Frame(self.tab_risk)
+        risk_header_frame.pack(fill='x', padx=16, pady=(12, 0))
+        # Right-aligned container for action buttons
+        risk_header_right = ttk.Frame(risk_header_frame)
+        risk_header_right.pack(side='right')
+    # Show Report button moved under the Submit Selection controls
+
         # use a PanedWindow to separate form and table inside the first tab
         paned = ttk.Panedwindow(self.tab_risk, orient='horizontal')
         paned.pack(fill='both', expand=True, padx=16, pady=16)
@@ -1897,6 +1992,20 @@ class AppTracker(tk.Tk):
         self.submit_button = ttk.Button(submit_frame, text='Submit Selection', command=self.submit_selection, style='Primary.TButton', width=side_btn_width+4)
         self.submit_button.pack(side='left')
 
+        # Add Show Report and Import CSV buttons under the submit controls (blue Primary style)
+        # Show Report button moved to top_buttons_frame
+        # Move Import CSV to its own centered row under the submit controls
+        try:
+            import_row = ttk.Frame(form_frame)
+            import_row.grid(row=11, column=0, columnspan=2, sticky='ew', padx=padx, pady=(0,12))
+            import_row.grid_columnconfigure(0, weight=1)
+            import_center = ttk.Frame(import_row)
+            import_center.grid(row=0, column=0)
+            import_btn = ttk.Button(import_center, text='Import CSV', command=self.import_csv_dialog, style='Primary.TButton')
+            import_btn.pack()
+        except Exception:
+            pass
+
         # Bind selection changes to update the submit button state
         try:
             self.department_listbox.bind('<<ListboxSelect>>', lambda e: self.update_submit_button_state())
@@ -1943,30 +2052,19 @@ class AppTracker(tk.Tk):
         
         # Edit Selected and Save Changes buttons at the top with Primary style
         ttk.Button(top_buttons_frame, text='Edit Selected', command=self.load_selected_for_edit, style='Primary.TButton').pack(side='left', padx=6)
+        # Save Changes and Show Report buttons (Save Changes first)
         ttk.Button(top_buttons_frame, text='Save Changes', command=self.save_edit, style='Primary.TButton').pack(side='left', padx=6)
+        try:
+            top_show = ttk.Button(top_buttons_frame, text='Show Reports', command=self.show_report, style='Primary.TButton')
+            top_show.pack(side='left', padx=6)
+        except Exception:
+            pass
         
-        # Move 'Purge Database' button to the top right-hand side of the screen
-        purge_button = ttk.Button(top_buttons_frame, text='Purge Database', command=self.purge_database_gui, style='Danger.TButton')
-        purge_button.pack(side='right', padx=6)
-        # Add Generate Smoke Test Data button to the top-right of the Risk tab
-        try:
-            gen_smoke_btn = ttk.Button(top_buttons_frame, text='Generate Smoke Test Data', command=on_generate_smoke, style='Accent.TButton')
-            gen_smoke_btn.pack(side='right', padx=6)
-        except Exception:
-            # If the handler isn't available for some reason, skip silently
-            pass
+    # 'Purge Database' button moved to Admin tab (centered under Admin Dashboard)
+        # 'Generate Smoke Test Data' button removed.
         # Import CSV button (single-file import matching smoke-test format)
-        try:
-            import_btn = ttk.Button(top_buttons_frame, text='Import CSV', command=self.import_csv_dialog, style='Secondary.TButton')
-            import_btn.pack(side='right', padx=6)
-        except Exception:
-            pass
-        # Diagnose CSV button
-        try:
-            diagnose_btn = ttk.Button(top_buttons_frame, text='Diagnose CSV', command=self.diagnose_csv_dialog, style='Secondary.TButton')
-            diagnose_btn.pack(side='right', padx=6)
-        except Exception:
-            pass
+        # Import CSV button moved under Submit Selection controls
+        # 'Diagnose CSV' button removed.
         
         # Create Note and Save Note buttons in a separate frame below
         edit_frame = ttk.Frame(right_frame)
@@ -3267,200 +3365,6 @@ class AppTracker(tk.Tk):
             t.start()
         except Exception as e:
             messagebox.showerror('Import Error', f'Failed to open CSV file: {e}')
-
-    def diagnose_csv_dialog(self):
-        """Open file dialog and run a read-only diagnosis for a CSV file."""
-        try:
-            from tkinter import filedialog
-            path = filedialog.askopenfilename(title='Select CSV file to diagnose', filetypes=[('CSV/TSV files', '*.csv;*.tsv;*.*')])
-            if not path:
-                return
-            import threading
-            t = threading.Thread(target=lambda: self.diagnose_csv_worker(path), daemon=True)
-            t.start()
-        except Exception as e:
-            messagebox.showerror('Diagnose Error', f'Failed to open CSV file: {e}')
-
-    def _show_diagnose_result(self, result):
-        """Show diagnosis details in a lightweight window."""
-        try:
-            if isinstance(result, dict) and result.get('error'):
-                messagebox.showerror('CSV Diagnose', result['error'])
-                return
-            win = tk.Toplevel(self)
-            win.title('CSV Import Diagnose')
-            win.geometry('700x500')
-            frame = ttk.Frame(win, padding=10)
-            frame.pack(fill='both', expand=True)
-            text = tk.Text(frame, wrap='word')
-            vsb = ttk.Scrollbar(frame, orient='vertical', command=text.yview)
-            text.configure(yscrollcommand=vsb.set)
-            text.pack(side='left', fill='both', expand=True)
-            vsb.pack(side='right', fill='y')
-
-            lines = []
-            lines.append(f"Detected delimiter: {repr(result.get('delimiter'))}")
-            headers = result.get('headers') or []
-            lines.append(f"Headers ({len(headers)}): {', '.join(headers)}")
-            lines.append("")
-            lines.append("Header mapping (normalized -> original):")
-            header_map = result.get('header_map') or {}
-            for k in sorted(header_map.keys()):
-                lines.append(f"  {k} -> {header_map[k]}")
-            lines.append("")
-            lines.append(f"Applications to CREATE: {result.get('apps_to_create', 0)}")
-            lines.append(f"Applications existing/updated: {result.get('apps_existing_or_update', 0)}")
-            lines.append(f"Integrations to CREATE: {result.get('integrations_to_create', 0)}")
-            lines.append(f"Rows analyzed: {result.get('rows_analyzed', 0)}")
-            errs = result.get('errors') or []
-            if errs:
-                lines.append("")
-                lines.append(f"Notes/Warnings ({len(errs)}):")
-                for e in errs[:50]:
-                    lines.append(f"  - {e}")
-                if len(errs) > 50:
-                    lines.append(f"  ...and {len(errs)-50} more")
-            text.insert('1.0', "\n".join(lines))
-            text.configure(state='disabled')
-            ttk.Button(frame, text='Close', command=win.destroy).pack(pady=8)
-        except Exception as e:
-            messagebox.showerror('CSV Diagnose', f'Failed to show diagnosis: {e}')
-
-    def diagnose_csv_worker(self, path):
-        """Background worker to diagnose a CSV without writing to DB."""
-        try:
-            result = self.diagnose_csv_file(path)
-        except Exception as e:
-            result = {'error': str(e)}
-        try:
-            self.after(1, lambda: self._show_diagnose_result(result))
-        except Exception:
-            pass
-
-    def diagnose_csv_file(self, path):
-        """Return a summary of what would be imported without writing."""
-        import csv
-        # Reuse robust delimiter detection similar to import
-        def _detect_delimiter(pth):
-            candidates = [',', '\t', ';', '|']
-            try:
-                with open(pth, 'r', encoding='utf-8-sig') as f:
-                    head = f.read(4096)
-                    first_line = head.splitlines()[0] if head else ''
-                    counts = {d: first_line.count(d) for d in candidates}
-                    best = max(counts.keys(), key=lambda d: counts[d]) if counts else ','
-                    if counts.get(best, 0) > 0:
-                        return best
-                    try:
-                        sniffer = csv.Sniffer()
-                        dialect = sniffer.sniff(head, delimiters=''.join(candidates))
-                        return getattr(dialect, 'delimiter', ',')
-                    except Exception:
-                        pass
-            except Exception:
-                pass
-            try:
-                with open(pth, 'r', encoding='utf-8-sig') as f:
-                    body = f.read(2048)
-                    if '\t' in body:
-                        return '\t'
-            except Exception:
-                pass
-            return ','
-
-        delim = _detect_delimiter(path)
-        headers = []
-        errors = []
-        apps_to_create = 0
-        apps_existing_or_update = 0
-        integrations_to_create = 0
-        rows_analyzed = 0
-
-        # Build existing application name set (normalized)
-        conn = None
-        try:
-            conn = database.connect_db()
-            cur = conn.cursor()
-            cur.execute('SELECT LOWER(TRIM(name)) FROM applications')
-            existing = {row[0] for row in cur.fetchall() if row and row[0] is not None}
-        finally:
-            try:
-                if conn:
-                    conn.close()
-            except Exception:
-                pass
-
-        # Helpers mirroring import logic
-        import re
-        def _norm_key(s: str) -> str:
-            try:
-                return re.sub(r'[^a-z0-9]', '', str(s).strip().lower())
-            except Exception:
-                return ''
-
-        with open(path, newline='', encoding='utf-8-sig') as fh:
-            reader = csv.DictReader(fh, delimiter=delim)
-            if reader.fieldnames is None:
-                return {'error': 'CSV file has no header row.'}
-            headers = [h for h in reader.fieldnames if h is not None]
-            header_map = {}
-            for h in headers:
-                header_map[_norm_key(h)] = h
-                header_map[str(h).strip()] = h
-
-            def get(raw, *opts):
-                for opt in opts:
-                    if opt in header_map:
-                        val = raw.get(header_map[opt])
-                        if val is not None:
-                            cv = str(val).strip()
-                            return '' if cv.lower() == 'none' else cv
-                    nk = _norm_key(opt)
-                    if nk in header_map:
-                        val = raw.get(header_map[nk])
-                        if val is not None:
-                            cv = str(val).strip()
-                            return '' if cv.lower() == 'none' else cv
-                return ''
-
-            seen_new = set()
-
-            for row in reader:
-                try:
-                    if not row or all((v is None or str(v).strip() == '' for v in row.values())):
-                        continue
-                    rows_analyzed += 1
-                    app_name = get(row, 'name', 'app_name', 'app name', 'application_name', 'application name', 'Application Name', 'Division', 'division', 'division_name', 'system', 'system_name', 'System Name') or ''
-                    if not app_name:
-                        # No app name -> cannot create app; but may still create integration? We'll count integration only if app exists in DB already
-                        int_name = get(row, 'integration_name', 'integration')
-                        if int_name:
-                            # If app isn't named, importer would skip this row; note warning
-                            errors.append('Row with integration but empty app name skipped')
-                        continue
-                    norm_app = app_name.strip().lower()
-                    if norm_app not in existing and norm_app not in seen_new:
-                        apps_to_create += 1
-                        seen_new.add(norm_app)
-                    else:
-                        apps_existing_or_update += 1
-
-                    int_name = get(row, 'integration_name', 'integration')
-                    if int_name:
-                        integrations_to_create += 1
-                except Exception as e:
-                    errors.append(f"Row diagnose error: {e}")
-
-        return {
-            'delimiter': delim,
-            'headers': headers,
-            'header_map': {k: header_map[k] for k in header_map},
-            'apps_to_create': apps_to_create,
-            'apps_existing_or_update': apps_existing_or_update,
-            'integrations_to_create': integrations_to_create,
-            'rows_analyzed': rows_analyzed,
-            'errors': errors,
-        }
 
     # Minimal progress window used during long-running imports
     class ProgressWindow(tk.Toplevel):
