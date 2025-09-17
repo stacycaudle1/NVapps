@@ -2696,6 +2696,46 @@ class AppTracker(tk.Tk):
                     dialog.destroy()
                     # Refresh the integrations table
                     self.refresh_integration_table()
+                    # Auto-scroll & highlight new integration row if present
+                    try:
+                        new_iid = str(integration_id)
+                        if new_iid in self.integrations_tree.get_children(''):
+                            # Scroll into view and (optionally) select but do not force focus or open edit dialog
+                            self.integrations_tree.see(new_iid)
+                            try:
+                                self.integrations_tree.selection_set(new_iid)
+                            except Exception:
+                                pass
+                            # Create a temporary highlight tag
+                            hl_tag = 'new_integration_highlight'
+                            if not hasattr(self, '_new_integration_highlight_configured'):
+                                try:
+                                    self.integrations_tree.tag_configure(hl_tag, background='#99ccff')
+                                    setattr(self, '_new_integration_highlight_configured', True)
+                                except Exception:
+                                    pass
+                            # Apply highlight tag (keep existing risk color tag if any by re-setting tags)
+                            try:
+                                current_vals = self.integrations_tree.item(new_iid, 'values')
+                                current_tags = list(self.integrations_tree.item(new_iid, 'tags') or [])
+                                if hl_tag not in current_tags:
+                                    current_tags.append(hl_tag)
+                                self.integrations_tree.item(new_iid, values=current_vals, tags=tuple(current_tags))
+                            except Exception:
+                                pass
+                            # Schedule removal of highlight after 2 seconds
+                            def _remove_highlight():
+                                try:
+                                    cur_tags = list(self.integrations_tree.item(new_iid, 'tags') or [])
+                                    if hl_tag in cur_tags:
+                                        cur_tags.remove(hl_tag)
+                                        self.integrations_tree.item(new_iid, tags=tuple(cur_tags))
+                                except Exception:
+                                    pass
+                            self.after(2000, _remove_highlight)
+                            # (Auto-open edit dialog removed per revert request)
+                    except Exception:
+                        pass
                     # Refresh main applications table to update averages / last_modified
                     try:
                         # Remember current composite iid (appId:category)
