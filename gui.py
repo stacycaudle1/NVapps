@@ -192,6 +192,102 @@ class AppTracker(tk.Tk):
         except Exception:
             pass
 
+    def indicate_duplicate_category(self, name: str):
+        """Visually indicate a duplicate category attempt using the main 'Add Category' button.
+        Fades button from its primary blue to red, shows warning, selects existing category, then fades back."""
+        try:
+            # Locate the main Add Category button if we stored it earlier
+            # Button is created as tk.Button in create_widgets; provide type hint for linters
+            btn = getattr(self, 'main_add_category_button', None)  # type: ignore[attr-defined]
+            if btn is None:
+                # Attempt to discover by text (last resort); this may fail silently
+                for child in self.winfo_children():
+                    try:
+                        if isinstance(child, ttk.Frame):
+                            for sub in child.winfo_children():
+                                try:
+                                    if hasattr(sub, 'cget') and sub.cget('text') == 'Add Category':
+                                        btn = sub
+                                        break
+                                except Exception:
+                                    pass
+                        if btn:
+                            break
+                    except Exception:
+                        pass
+            if btn is None:
+                # Fallback: just warn
+                messagebox.showwarning('Duplicate Category', f'Categories must be unique. "{name}" is already in the list.')
+                return
+
+            # Fade using direct background updates (tk.Button supports bg)
+            start_rgb = (0, 120, 212)   # #0078d4
+            end_rgb = (200, 30, 30)     # red tone
+            steps = 16
+            interval = 40
+
+            def lerp(a,b,t):
+                return int(a + (b-a)*t)
+
+            def fade_forward(i=0):
+                try:
+                    t = i/float(steps)
+                    r = lerp(start_rgb[0], end_rgb[0], t)
+                    g = lerp(start_rgb[1], end_rgb[1], t)
+                    b = lerp(start_rgb[2], end_rgb[2], t)
+                    try:
+                        btn.config(bg=f'#{r:02x}{g:02x}{b:02x}')  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                if i < steps:
+                    self.after(interval, lambda: fade_forward(i+1))
+                else:
+                    show_warning_and_select()
+
+            def show_warning_and_select():
+                try:
+                    messagebox.showwarning('Duplicate Category', f'Categories must be unique. "{name}" is already in the list.')
+                except Exception:
+                    pass
+                # Select the existing entry
+                try:
+                    target = name.strip().lower()
+                    for idx in range(self.category_listbox.size()):
+                        if self.category_listbox.get(idx).strip().lower() == target:
+                            self.category_listbox.selection_clear(0,'end')
+                            self.category_listbox.selection_set(idx)
+                            self.category_listbox.see(idx)
+                            break
+                except Exception:
+                    pass
+                fade_back()
+
+            def fade_back(i=0):
+                try:
+                    t = i/float(steps)
+                    r = lerp(end_rgb[0], start_rgb[0], t)
+                    g = lerp(end_rgb[1], start_rgb[1], t)
+                    b = lerp(end_rgb[2], start_rgb[2], t)
+                    try:
+                        btn.config(bg=f'#{r:02x}{g:02x}{b:02x}')  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+                if i < steps:
+                    self.after(interval, lambda: fade_back(i+1))
+                else:
+                    try:
+                        btn.config(bg='#0078d4')  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+
+            fade_forward()
+        except Exception:
+            pass
+
     def add_category_popup(self):
         popup = tk.Toplevel(self)
         popup.title('Add Category')
@@ -199,9 +295,21 @@ class AppTracker(tk.Tk):
         entry = ttk.Entry(popup)
         entry.pack(padx=10, pady=5)
 
+        def show_dup_and_flash(name):
+            # Trigger fade on main Add Category button
+            try:
+                self.indicate_duplicate_category(name)
+            except Exception:
+                pass
+            # After fade-to-red completes the helper will show warning & fade back
+
         def add_cat():
             name = entry.get().strip()
             if not name:
+                return
+            existing = [self.category_listbox.get(i).strip().lower() for i in range(self.category_listbox.size())]
+            if name.lower() in existing:
+                show_dup_and_flash(name)
                 return
             try:
                 database.ensure_category(name)
@@ -1988,7 +2096,15 @@ class AppTracker(tk.Tk):
 
         cat_buttons_frame = ttk.Frame(form_frame)
         cat_buttons_frame.grid(row=9, column=0, sticky='nw', padx=padx, pady=(0, pady))
-        ttk.Button(cat_buttons_frame, text='Add Category', command=self.add_category_popup, style='Primary.TButton', width=side_btn_width).pack(pady=5, anchor='w', fill='x')
+        # Store a reference so duplicate indicator can target this button.
+        # Use tk.Button so we can reliably manipulate background for duplicate flash.
+        self.main_add_category_button = tk.Button(
+            cat_buttons_frame,
+            text='Add Category',
+            command=self.add_category_popup,
+            bg='#0078d4', fg='white', activebackground='#006cbe', relief='flat', padx=6, pady=4
+        )
+        self.main_add_category_button.pack(pady=5, anchor='w', fill='x')
         ttk.Button(cat_buttons_frame, text='Manage Categories', command=self.manage_categories_popup, style='Primary.TButton', width=side_btn_width).pack(pady=5, fill='x')
 
         cat_frame = ttk.Frame(form_frame)
