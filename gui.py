@@ -148,6 +148,13 @@ class AppTracker(tk.Tk):
         style.configure('Success.TButton', background='#90EE90', foreground='black', borderwidth=0)  # Light green
         style.map('Success.TButton', background=[('active', '!disabled', '#7CCD7C')], foreground=[('disabled', '#a0a0a0')])
 
+        # LabelFrame and label styles for dialogs and guides
+        style.configure('Guide.TLabelframe', background=WIN_BG)
+        style.configure('Guide.TLabelframe.Label', background=WIN_BG, foreground=ACCENT, font=('Segoe UI', 10, 'bold'))
+        style.configure('GuideNumber.TLabel', background=WIN_BG, foreground='#333333', font=('Segoe UI', 10, 'bold'))
+        style.configure('GuideText.TLabel', background=WIN_BG, foreground='#333333', font=('Segoe UI', 10))
+        style.configure('FormLabel.TLabel', background=WIN_BG, foreground=ACCENT, font=('Segoe UI', 10, 'bold'))
+
     def get_departments(self):
         """Get all business units (departments) from the database"""
         conn = database.connect_db()
@@ -3478,8 +3485,8 @@ class AppTracker(tk.Tk):
         # Create and configure dialog
         dialog = tk.Toplevel(self)
         dialog.title('Edit Integration')
-        dialog.geometry('500x700')
-        dialog.minsize(500, 700)
+        dialog.geometry('650x700')
+        dialog.minsize(650, 700)
         dialog.resizable(False, False)
         dialog.transient(self)
         dialog.grab_set()
@@ -3492,24 +3499,57 @@ class AppTracker(tk.Tk):
         dialog.grid_rowconfigure(0, weight=1)
         dialog.grid_columnconfigure(0, weight=1)
         
-        # Configure main container grid
+        # Configure main container grid (2 columns: legend | form)
         main_container.grid_rowconfigure(0, weight=1)
-        main_container.grid_columnconfigure(0, weight=1)
+        main_container.grid_columnconfigure(0, weight=0)  # legend fixed
+        main_container.grid_columnconfigure(1, weight=1)  # form grows
+        
+        # Score legend on the left
+        # Edit the labels below to adjust the guidance shown next to the form.
+        # To remove the legend entirely, delete this LabelFrame block and set
+        # form_frame.grid(row=0, column=0, ...) and drop columnspan=2 on the separator/button row.
+        legend_frame = ttk.LabelFrame(main_container, text='Score Guide', style='Guide.TLabelframe')
+        legend_frame.grid(row=0, column=0, sticky='nsw', padx=(0, 15))
+        
+        # Build legend using ranges to match the posted guide
+        legend_rows = [
+            ('1–3',  'Nice to Have'),
+            ('4–6',  'Affects Efficiency'),
+            ('7–9',  'Affects Security, Safety, Revenue, Customer Service'),
+            ('10 -', 'Critical Operational Impact'),
+        ]
+        # Two-column layout: range | description
+        for r, (rng, desc) in enumerate(legend_rows):
+            ttk.Label(legend_frame, text=rng, width=5, anchor='e', style='GuideNumber.TLabel').grid(
+                row=r, column=0, sticky='ne', padx=(10, 8), pady=(6, 6)
+            )
+            ttk.Label(legend_frame, text=desc, wraplength=260, justify='left', style='GuideText.TLabel').grid(
+                row=r, column=1, sticky='nw', padx=(0, 10), pady=(6, 6)
+            )
+        # Footer guidance text below legend
+        ttk.Label(
+            legend_frame,
+            text='Rate each attribute for this integration using this Score Guide',
+            wraplength=300,
+            justify='left',
+            style='GuideText.TLabel'
+        ).grid(row=len(legend_rows), column=0, columnspan=2, sticky='we', padx=10, pady=(10, 6))
+        
         
         # Form frame setup with grid
         form_frame = ttk.Frame(main_container, padding=15)
-        form_frame.grid(row=0, column=0, sticky='nsew')
+        form_frame.grid(row=0, column=1, sticky='nsew')
         
         # Configure form frame grid
         form_frame.grid_columnconfigure(1, weight=1)
         
         # Name and vendor fields
-        ttk.Label(form_frame, text='Integration Name:', anchor='e').grid(row=0, column=0, sticky='e', pady=5, padx=5)
+        ttk.Label(form_frame, text='Integration Name:', anchor='e', style='FormLabel.TLabel').grid(row=0, column=0, sticky='e', pady=5, padx=5)
         name_entry = ttk.Entry(form_frame, width=40)
         name_entry.grid(row=0, column=1, sticky='ew', pady=5, padx=5)
         name_entry.focus_set()
         
-        ttk.Label(form_frame, text='Vendor:', anchor='e').grid(row=1, column=0, sticky='e', pady=5, padx=5)
+        ttk.Label(form_frame, text='Vendor:', anchor='e', style='FormLabel.TLabel').grid(row=1, column=0, sticky='e', pady=5, padx=5)
         vendor_entry = ttk.Entry(form_frame, width=40)
         vendor_entry.grid(row=1, column=1, sticky='ew', pady=5, padx=5)
         
@@ -3519,22 +3559,22 @@ class AppTracker(tk.Tk):
                 'Safety', 'Security', 'Monetary', 'CustomerService']
 
         for idx, key in enumerate(keys, start=2):
-            ttk.Label(form_frame, text=f'{key}:', anchor='e').grid(row=idx, column=0, sticky='e', pady=5, padx=5)
+            ttk.Label(form_frame, text=f'{key}:', anchor='e', style='FormLabel.TLabel').grid(row=idx, column=0, sticky='e', pady=5, padx=5)
             entry = ttk.Entry(form_frame, width=5)
             entry.grid(row=idx, column=1, sticky='w', pady=5, padx=5)
             factor_entries[key] = entry
         
         # Notes field
-        ttk.Label(form_frame, text='Notes:', anchor='e').grid(row=11, column=0, sticky='ne', pady=5, padx=5)
+        ttk.Label(form_frame, text='Notes:', anchor='e', style='FormLabel.TLabel').grid(row=11, column=0, sticky='ne', pady=5, padx=5)
         notes_text = tk.Text(form_frame, height=4, width=40, wrap='word')
         notes_text.grid(row=11, column=1, sticky='w', pady=5, padx=5)
         
         # Add separator
-        ttk.Separator(main_container, orient='horizontal').grid(row=1, column=0, sticky='ew', pady=(10, 5))
+        ttk.Separator(main_container, orient='horizontal').grid(row=1, column=0, columnspan=2, sticky='ew', pady=(10, 5))
         
         # Button frame at bottom
         button_frame = ttk.Frame(main_container)
-        button_frame.grid(row=2, column=0, sticky='ew', pady=5)
+        button_frame.grid(row=2, column=0, columnspan=2, sticky='ew', pady=5)
         
         # Configure button frame grid
         button_frame.grid_columnconfigure(0, weight=1)  # Push buttons to the right
@@ -3701,6 +3741,7 @@ class AppTracker(tk.Tk):
             button_frame, 
             text='Cancel', 
             command=dialog.destroy,
+            style='Secondary.TButton',
             width=15
         )
         cancel_btn.grid(row=0, column=0, padx=5)
@@ -4973,116 +5014,101 @@ class AppTracker(tk.Tk):
             messagebox.showerror('Error', f'Failed to refresh integrations table: {e}')
             
     def on_integration_double_click(self, event):
-        """Handle double-click event on an integration to edit it"""
+        """Handle double-click event on an integration to edit it, using the same UI layout as add_system_integration."""
         sel = self.integrations_tree.selection()
         if not sel:
             return
-            
+
         item = sel[0]
         try:
             integration_id = int(item)
             integration = database.get_system_integration(integration_id)
-            
+
             if not integration:
-                messagebox.showinfo("Edit Integration", "Could not find the selected integration.")
+                messagebox.showinfo('Edit Integration', 'Could not find the selected integration.')
                 return
-                
-            # Create a dialog for editing the integration
+
+            # --- Dialog setup to mirror add_system_integration ---
             dialog = tk.Toplevel(self)
             try:
                 int_title = integration['name'] if hasattr(integration, 'keys') else integration[2]
             except Exception:
                 int_title = integration[2] if len(integration) > 2 else 'Edit Integration'
             dialog.title(f'Edit Integration: {int_title}')
-            dialog.geometry('520x640')
-            dialog.minsize(520, 480)
+            dialog.geometry('650x700')
+            dialog.minsize(650, 700)
+            dialog.resizable(False, False)
             dialog.transient(self)
             dialog.grab_set()
 
-            # Configure dialog grid (3 rows: form(scrollable), separator, buttons)
+            # Main container with 2 columns: legend | form
+            main_container = ttk.Frame(dialog)
+            main_container.grid(row=0, column=0, sticky='nsew', padx=10, pady=10)
             dialog.grid_rowconfigure(0, weight=1)
-            dialog.grid_rowconfigure(1, weight=0)
-            dialog.grid_rowconfigure(2, weight=0)
             dialog.grid_columnconfigure(0, weight=1)
+            main_container.grid_rowconfigure(0, weight=1)
+            main_container.grid_columnconfigure(0, weight=0)
+            main_container.grid_columnconfigure(1, weight=1)
 
-            # Scrollable form area
-            content_container = ttk.Frame(dialog, padding=(12, 10, 12, 4))
-            content_container.grid(row=0, column=0, sticky='nsew')
-            content_container.grid_rowconfigure(0, weight=1)
-            content_container.grid_columnconfigure(0, weight=1)
+            # Score legend (same as add_system_integration)
+            legend_frame = ttk.LabelFrame(main_container, text='Score Guide', style='Guide.TLabelframe')
+            legend_frame.grid(row=0, column=0, sticky='nsw', padx=(0, 15))
+            legend_rows = [
+                ('1–3',  'Nice to Have'),
+                ('4–6',  'Affects Efficiency'),
+                ('7–9',  'Affects Security, Safety, Revenue, Customer Service'),
+                ('10 -', 'Critical Operational Impact'),
+            ]
+            for r, (rng, desc) in enumerate(legend_rows):
+                ttk.Label(legend_frame, text=rng, width=5, anchor='e', style='GuideNumber.TLabel').grid(
+                    row=r, column=0, sticky='ne', padx=(10, 8), pady=(6, 6)
+                )
+                ttk.Label(legend_frame, text=desc, wraplength=260, justify='left', style='GuideText.TLabel').grid(
+                    row=r, column=1, sticky='nw', padx=(0, 10), pady=(6, 6)
+                )
+            ttk.Label(
+                legend_frame,
+                text='Rate each attribute for this integration using this Score Guide',
+                wraplength=300,
+                justify='left',
+                style='GuideText.TLabel'
+            ).grid(row=len(legend_rows), column=0, columnspan=2, sticky='we', padx=10, pady=(10, 6))
 
-            canvas = tk.Canvas(content_container, highlightthickness=0, borderwidth=0)
-            vsb = ttk.Scrollbar(content_container, orient='vertical', command=canvas.yview)
-            canvas.configure(yscrollcommand=vsb.set)
-            canvas.grid(row=0, column=0, sticky='nsew')
-            vsb.grid(row=0, column=1, sticky='ns')
+            # Form area
+            form_frame = ttk.Frame(main_container, padding=15)
+            form_frame.grid(row=0, column=1, sticky='nsew')
+            form_frame.grid_columnconfigure(1, weight=1)
 
-            form_frame = ttk.Frame(canvas)
-            # Create a window inside the canvas
-            form_window = canvas.create_window((0, 0), window=form_frame, anchor='nw')
-
-            def _on_configure(event):
-                # Update scrollregion to include the whole frame
-                canvas.configure(scrollregion=canvas.bbox('all'))
-                # Resize inner frame window to canvas width
-                canvas.itemconfigure(form_window, width=canvas.winfo_width())
-
-            form_frame.bind('<Configure>', _on_configure)
-
-            # Mousewheel support
-            def _on_mousewheel(event):
-                delta = 0
-                if event.delta:  # Windows / MacOS
-                    delta = int(-1 * (event.delta / 120))
-                else:  # Linux uses event.num
-                    if event.num == 5:
-                        delta = 1
-                    elif event.num == 4:
-                        delta = -1
-                if delta:
-                    canvas.yview_scroll(delta, 'units')
-
-            canvas.bind_all('<MouseWheel>', _on_mousewheel)  # Windows / Mac
-            canvas.bind_all('<Button-4>', _on_mousewheel)     # Linux scroll up
-            canvas.bind_all('<Button-5>', _on_mousewheel)     # Linux scroll down
-
-            # Form content
-            ttk.Label(form_frame, text='Integration Name:', anchor='e').grid(row=0, column=0, sticky='e', pady=5, padx=5)
-            name_entry = ttk.Entry(form_frame, width=44)
+            # Name & Vendor
+            ttk.Label(form_frame, text='Integration Name:', anchor='e', style='FormLabel.TLabel').grid(row=0, column=0, sticky='e', pady=5, padx=5)
+            name_entry = ttk.Entry(form_frame, width=40)
             name_entry.grid(row=0, column=1, sticky='ew', pady=5, padx=5)
             try:
-                name_entry.insert(0, integration['name'] or "")
+                name_entry.insert(0, integration['name'] or '')
             except Exception:
-                name_entry.insert(0, integration[2] or "")
+                name_entry.insert(0, integration[2] or '')
             name_entry.focus_set()
-            
-            ttk.Label(form_frame, text='Vendor:', anchor='e').grid(row=1, column=0, sticky='e', pady=5, padx=5)
-            vendor_entry = ttk.Entry(form_frame, width=44)
+
+            ttk.Label(form_frame, text='Vendor:', anchor='e', style='FormLabel.TLabel').grid(row=1, column=0, sticky='e', pady=5, padx=5)
+            vendor_entry = ttk.Entry(form_frame, width=40)
             vendor_entry.grid(row=1, column=1, sticky='ew', pady=5, padx=5)
             try:
-                vendor_entry.insert(0, integration['vendor'] or "")
+                vendor_entry.insert(0, integration['vendor'] or '')
             except Exception:
-                vendor_entry.insert(0, integration[3] or "")
-            
-            # Factor entry fields
-            factor_entries = {}
-            keys = ['Score', 'Need', 'Criticality', 'Installed', 'DisasterRecovery',
-                    'Safety', 'Security', 'Monetary', 'CustomerService']
+                vendor_entry.insert(0, integration[3] or '')
 
-            # Integration indices based on SQL query:
-            # id(0), parent_app_id(1), name(2), vendor(3), score(4), need(5), criticality(6), installed(7),
-            # disaster_recovery(8), safety(9), security(10), monetary(11), customer_service(12), notes(13), risk_score(14), last_modified(15)
-            factor_indices = {
+            # Factors
+            factor_entries: dict[str, ttk.Entry] = {}
+            keys = ['Score', 'Need', 'Criticality', 'Installed', 'DisasterRecovery', 'Safety', 'Security', 'Monetary', 'CustomerService']
+            factor_indices = {  # indices for tuple-style access
                 'Score': 4, 'Need': 5, 'Criticality': 6, 'Installed': 7, 'DisasterRecovery': 8,
                 'Safety': 9, 'Security': 10, 'Monetary': 11, 'CustomerService': 12
             }
-            
             for idx, key in enumerate(keys, start=2):
-                ttk.Label(form_frame, text=f'{key}:', anchor='e').grid(row=idx, column=0, sticky='e', pady=5, padx=5)
+                ttk.Label(form_frame, text=f'{key}:', anchor='e', style='FormLabel.TLabel').grid(row=idx, column=0, sticky='e', pady=5, padx=5)
                 entry = ttk.Entry(form_frame, width=5)
                 entry.grid(row=idx, column=1, sticky='w', pady=5, padx=5)
-                
-                # Pre-populate with existing values using named access when possible
+                # Pre-fill
                 try:
                     if hasattr(integration, 'keys') and key.lower() in integration.keys() and integration[key.lower()] is not None:
                         entry.insert(0, str(integration[key.lower()]))
@@ -5094,104 +5120,89 @@ class AppTracker(tk.Tk):
                             entry.insert(0, str(integration[factor_indices[key]]))
                     except Exception:
                         pass
-                    
                 factor_entries[key] = entry
-            
-            # Notes field
-            ttk.Label(form_frame, text='Notes:', anchor='e').grid(row=11, column=0, sticky='ne', pady=5, padx=5)
-            notes_text = tk.Text(form_frame, height=5, width=44, wrap='word')
-            notes_text.grid(row=11, column=1, sticky='ew', pady=5, padx=5)
-            if integration[13]:  # Notes are at index 13 in the SQL query result
-                notes_text.insert('1.0', integration[13])
-            
-            # Configure column expansion
-            form_frame.grid_columnconfigure(1, weight=1)
-            
+
+            # Notes
+            ttk.Label(form_frame, text='Notes:', anchor='e', style='FormLabel.TLabel').grid(row=11, column=0, sticky='ne', pady=5, padx=5)
+            notes_text = tk.Text(form_frame, height=4, width=40, wrap='word')
+            notes_text.grid(row=11, column=1, sticky='w', pady=5, padx=5)
+            try:
+                existing_notes = integration['notes'] if hasattr(integration, 'keys') else integration[13]
+            except Exception:
+                existing_notes = integration[13] if len(integration) > 13 else ''
+            if existing_notes:
+                notes_text.insert('1.0', existing_notes)
+
+            # Separator under content
+            ttk.Separator(main_container, orient='horizontal').grid(row=1, column=0, columnspan=2, sticky='ew', pady=(10, 5))
+
+            # Buttons row
+            button_frame = ttk.Frame(main_container)
+            button_frame.grid(row=2, column=0, columnspan=2, sticky='ew', pady=5)
+            button_frame.grid_columnconfigure(0, weight=1)
+
             def update_integration():
-                # Get values from form
                 try:
                     name = name_entry.get().strip()
                     if not name:
                         messagebox.showwarning('Validation Error', 'Integration name is required')
                         return
-                    
-                    # Create a dictionary with appropriate types for each field
-                    fields = {}
-                    
-                    # Add string values
+
+                    fields: dict[str, object] = {}
                     fields['name'] = name
                     fields['vendor'] = vendor_entry.get().strip()
                     fields['notes'] = notes_text.get('1.0', 'end-1c').strip()
-                    
-                    # Get factor values and create ratings dictionary for score calculation
-                    ratings = {}
+
+                    ratings: dict[str, int] = {}
                     for key in keys:
                         try:
                             value = factor_entries[key].get().strip()
                             if value:
-                                # Store as int in the ratings dict for calculation
-                                int_value = int(value)
-                                ratings[key] = int_value
-                                # Store as int in fields dict for database
-                                fields[key.lower()] = int_value
+                                iv = int(value)
+                                ratings[key] = iv
+                                fields[key.lower()] = iv
                             else:
                                 ratings[key] = 0
                                 fields[key.lower()] = 0
                         except ValueError:
                             messagebox.showwarning('Validation Error', f'{key} must be a number')
                             return
-                    
-                    # Calculate risk score
-                        # Calculate risk score using (10 - score) * criticality
-                        s = int(ratings.get('Score', 0)) if isinstance(ratings, dict) else int(ratings[0])
-                        cval = int(ratings.get('Criticality', 0)) if isinstance(ratings, dict) else int(ratings[2])
-                        fields['risk_score'] = (10 - s) * cval  # Store as int/float
-                    
-                    # Update integration in database
+
+                    s = int(ratings.get('Score', 0)) if isinstance(ratings, dict) else 0
+                    cval = int(ratings.get('Criticality', 0)) if isinstance(ratings, dict) else 0
+                    fields['risk_score'] = (10 - s) * cval
+
                     success = database.update_system_integration(integration_id, fields)
                     if success:
                         messagebox.showinfo('Success', 'Integration updated successfully')
                         dialog.destroy()
-                        # Refresh the integrations table
                         self.refresh_integration_table()
                     else:
                         messagebox.showerror('Error', 'Failed to update integration')
                 except Exception as e:
                     messagebox.showerror('Error', f'Failed to update integration: {e}')
-            
-            # Add a function to delete integration
+
             def delete_integration():
                 if messagebox.askyesno('Confirm Delete', 'Are you sure you want to delete this integration? This cannot be undone.'):
                     try:
                         database.delete_system_integration(integration_id)
                         messagebox.showinfo('Success', 'Integration deleted successfully')
                         dialog.destroy()
-                        # Refresh the integrations table
                         self.refresh_integration_table()
                     except Exception as e:
                         messagebox.showerror('Error', f'Failed to delete integration: {e}')
-            
-            # Separator
-            sep = ttk.Separator(dialog, orient='horizontal')
-            sep.grid(row=1, column=0, sticky='ew', pady=(4, 6), padx=12)
 
-            # Button bar (fixed at bottom)
-            button_frame = ttk.Frame(dialog, padding=(12, 4, 12, 12))
-            button_frame.grid(row=2, column=0, sticky='ew')
-            button_frame.grid_columnconfigure(0, weight=1)  # spacer column
-            # Buttons in columns 1..3
-            update_btn = ttk.Button(button_frame, text='Update', command=update_integration, style='Primary.TButton', width=12)
-            delete_btn = ttk.Button(button_frame, text='Delete', command=delete_integration, style='Danger.TButton', width=12)
-            cancel_btn = ttk.Button(button_frame, text='Cancel', command=dialog.destroy, width=12)
-            # Place
-            update_btn.grid(row=0, column=1, padx=4)
-            delete_btn.grid(row=0, column=2, padx=4)
-            cancel_btn.grid(row=0, column=3, padx=4)
+            update_btn = ttk.Button(button_frame, text='Update', command=update_integration, style='Primary.TButton', width=15)
+            delete_btn = ttk.Button(button_frame, text='Delete', command=delete_integration, style='Danger.TButton', width=15)
+            cancel_btn = ttk.Button(button_frame, text='Cancel', command=dialog.destroy, style='Secondary.TButton', width=15)
+            # place buttons: cancel on left, update on right like add dialog
+            cancel_btn.grid(row=0, column=0, padx=5)
+            update_btn.grid(row=0, column=1, padx=5)
+            delete_btn.grid(row=0, column=2, padx=5)
 
-            # Keyboard shortcuts
             dialog.bind('<Return>', lambda _e: update_integration())
             dialog.bind('<Escape>', lambda _e: dialog.destroy())
-            
+
         except Exception as e:
             messagebox.showerror('Error', f'Failed to load integration for editing: {e}')
             
