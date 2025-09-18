@@ -39,8 +39,19 @@ function Force-RemoveVenv {
 function Create-Venv {
     param($Interpreter)
     Write-Host "Creating new venv with: $Interpreter" -ForegroundColor Cyan
-    & $Interpreter -m venv .venv
-    if (-not (Test-Path '.venv/Scripts/Activate.ps1')) { throw 'Venv creation failed (no Scripts/Activate.ps1)' }
+    # Support interpreters with arguments like 'py -3.12'
+    $parts = @()
+    if ($Interpreter -is [string]) {
+        $parts = $Interpreter -split ' '
+    } else {
+        $parts = @($Interpreter)
+    }
+    if ($parts.Count -gt 1) {
+        & $parts[0] $parts[1..($parts.Count-1)] -m venv .venv
+    } else {
+        & $parts[0] -m venv .venv
+    }
+    if (-not (Test-Path '.venv\Scripts\Activate.ps1')) { throw 'Venv creation failed (no Scripts/Activate.ps1)' }
 }
 
 function Activate-Venv {
@@ -60,18 +71,19 @@ function Install-Dependencies {
 
 function Verify-Environment {
     Write-Host 'Verifying key imports...' -ForegroundColor Cyan
-    python - <<'PY'
+    $pyCode = @'
 import sys, importlib
-mods = ['openpyxl','pandas','matplotlib','tkinter']
-print('Interpreter:', sys.executable)
-print('Version:', sys.version.split()[0])
+mods = ["openpyxl","pandas","matplotlib","tkinter"]
+print("Interpreter:", sys.executable)
+print("Version:", sys.version.split()[0])
 for m in mods:
     try:
         importlib.import_module(m)
-        print('[OK]', m)
+        print("[OK]", m)
     except Exception as e:
-        print('[FAIL]', m, '-', e)
-PY
+        print("[FAIL]", m, "-", e)
+'@
+    & python -c $pyCode
 }
 
 # Main flow
