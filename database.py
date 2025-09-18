@@ -6,6 +6,9 @@ __all__ = [
     'connect_db',
     'initialize_database',
     'purge_database',
+    'ensure_business_unit',
+    'ensure_division',
+    'get_division_application',
     'add_application',
     'add_system_integration',
     'get_system_integration',
@@ -145,6 +148,15 @@ def initialize_database():
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
                 last_modified TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )""")
+
+            # Divisions table (new normalized structure) - optional future use
+            c.execute("""CREATE TABLE IF NOT EXISTS divisions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                business_unit_id INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                UNIQUE(business_unit_id, name),
+                FOREIGN KEY(business_unit_id) REFERENCES business_units(id) ON DELETE CASCADE
             )""")
 
             # Create other required tables
@@ -769,3 +781,107 @@ def dr_priority_band(risk_score):
     if score >= 1:
         return 'Low'
     return None
+
+def get_division_application(division_name):
+    """Get existing application ID for a division name, if any exists.
+    Returns (app_id, has_links) tuple where has_links indicates if the app
+    has any business unit or category links."""
+    if not division_name:
+        return None, False
+    
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        # Check for exact division name match
+        c.execute('''
+            SELECT a.id,
+                   (SELECT COUNT(*) FROM application_business_units bu WHERE bu.app_id = a.id) +
+                   (SELECT COUNT(*) FROM application_categories ac WHERE ac.app_id = a.id) as link_count
+            FROM applications a 
+            WHERE LOWER(TRIM(a.division)) = LOWER(TRIM(?))
+            ORDER BY link_count DESC, a.id
+            LIMIT 1
+        ''', (division_name,))
+        row = c.fetchone()
+        if row:
+            return row[0], row[1] > 0
+    finally:
+        conn.close()
+    return None, False
+
+# ---------------- New helper & constraint functions -----------------
+def ensure_business_unit(name: str):
+    """Return id of business unit with given name (case-insensitive), creating if needed.
+
+    Returns None if name is empty/whitespace."""
+    if not name:
+        return None
+    nm = str(name).strip()
+    if not nm:
+        return None
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        c.execute('SELECT id FROM business_units WHERE LOWER(name)=LOWER(?)', (nm,))
+        row = c.fetchone()
+        if row:
+            return row[0]
+        c.execute('INSERT INTO business_units (name, last_modified) VALUES (?, CURRENT_TIMESTAMP)', (nm,))
+        conn.commit()
+        return c.lastrowid
+    finally:
+        conn.close()
+
+def ensure_division(business_unit_id: int, division_name: str):
+    """Return id of division under a business unit (normalized future design).
+
+    Currently stores in divisions table (if used). If division table unused elsewhere,
+    this remains no-op helper for forward compatibility."""
+    if business_unit_id is None or not division_name:
+        return None
+    nm = str(division_name).strip()
+    if not nm:
+        return None
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        # Ensure table exists (should via initialize)
+        c.execute('''CREATE TABLE IF NOT EXISTS divisions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            business_unit_id INTEGER NOT NULL,
+            name TEXT NOT NULL,
+            UNIQUE(business_unit_id, name),
+            FOREIGN KEY(business_unit_id) REFERENCES business_units(id) ON DELETE CASCADE
+        )''')
+        c.execute('SELECT id FROM divisions WHERE business_unit_id=? AND LOWER(name)=LOWER(?)', (business_unit_id, nm))
+        row = c.fetchone()
+        if row:
+            return row[0]
+        c.execute('INSERT INTO divisions (business_unit_id, name) VALUES (?, ?)', (business_unit_id, nm))
+        conn.commit()
+        return c.lastrowid
+    finally:
+        conn.close()
+
+def add_unique_constraints():
+    """Create idempotent indexes to prevent duplicates."""
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        try:
+            c.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_business_units_name ON business_units(LOWER(name))')
+        except Exception:
+            pass
+        try:
+            c.execute('CREATE UNIQUE INDEX IF NOT EXISTS uq_divisions_bu_name ON divisions(business_unit_id, LOWER(name))')
+        except Exception:
+            pass
+        conn.commit()
+    finally:
+        conn.close()
+
+# Call constraints setup at import (safe if DB not yet initialized)
+try:
+    add_unique_constraints()
+except Exception:
+    pass

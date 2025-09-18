@@ -2,9 +2,6 @@ import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from datetime import datetime
 import database
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-import pandas as pd
 
 # Color palette
 ACCENT = '#0078d4'       # primary accent (blue)
@@ -590,53 +587,10 @@ class AppTracker(tk.Tk):
             msg.pack(expand=True)
             return
             
-        # Convert to DataFrame for easier manipulation
-        df = pd.DataFrame(data, columns=['Division', 'Criticality', 'Risk'])
-
-        # Sort based on selected option
-        if sort_by == "Criticality":
-            df = df.sort_values('Criticality', ascending=False)
-        elif sort_by == "Risk Score":
-            df = df.sort_values('Risk', ascending=False)
-        else:  # Division Name
-            df = df.sort_values('Division')
-
-        # Create the matplotlib figure
-        fig, ax = plt.subplots(figsize=(12, 6))
-        bars = ax.bar(range(len(df)), df['Criticality'])
-
-        # Customize the chart
-        ax.set_title('Division Criticality Comparison', fontsize=12, pad=15)
-        ax.set_xlabel('Divisions', fontsize=10)
-        ax.set_ylabel('Criticality Score', fontsize=10)
-
-        # Add division names as x-tick labels
-        plt.xticks(range(len(df)), df['Division'].tolist(), rotation=45, ha='right')
-
-        # Color the bars based on criticality score
-        for bar, score in zip(bars, df['Criticality']):
-            if score >= 8:
-                bar.set_color('#ff9999')  # Light red
-            elif score >= 4:
-                bar.set_color('#ffcc99')  # Light orange
-            else:
-                bar.set_color('#99cc99')  # Light green
-
-        # Add value labels on top of bars
-        for bar in bars:
-            height = bar.get_height()
-            ax.text(bar.get_x() + bar.get_width() / 2., height, f'{height:.1f}', ha='center', va='bottom')
-
-        # Adjust layout to prevent label cutoff
-        plt.tight_layout()
-
-        # Create canvas and embed in frame
-        canvas = FigureCanvasTkAgg(fig, master=chart_frame)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill='both', expand=True)
-
-        # Close the figure to free memory
-        plt.close(fig)
+        # Chart functionality temporarily disabled
+        msg = tk.Label(chart_frame, text="Chart functionality temporarily disabled", 
+                     font=('Segoe UI', 12), fg='gray')
+        msg.pack(expand=True)
     
     def debug_show_table_data(self):
         """Debug helper to check data in tables"""
@@ -2564,7 +2518,7 @@ class AppTracker(tk.Tk):
         self.refresh_table()
 
     def submit_selection(self):
-        """Create application(s) from selected Business Unit(s), Division and Category(s)."""
+        """Create or update application from selected Business Unit(s), Division and Category(s)."""
         # Get selected departments (business units)
         dept_indices = self.department_listbox.curselection()
         if not dept_indices:
@@ -2592,37 +2546,45 @@ class AppTracker(tk.Tk):
         cats = self.get_categories()
         cat_ids = [cats[i][0] for i in cat_sel if i < len(cats)]
 
-        # Confirm with the user before creating entries
-        confirm = messagebox.askyesno('Confirm Create', f'Create application for Division "{division_name}" linked to {len(dept_ids)} Business Unit(s) and {len(cat_ids)} Category(s)?')
+        # Check if division already exists
+        existing_id, has_links = database.get_division_application(division_name)
+        action_desc = "Update" if existing_id and has_links else "Create"
+        
+        # Confirm with the user with appropriate message
+        message = f'{action_desc} application for Division "{division_name}" linked to {len(dept_ids)} Business Unit(s) and {len(cat_ids)} Category(s)?'
+        if existing_id and has_links:
+            message += "\n\nThis division already exists and has links. The operation will update its relationships."
+        
+        confirm = messagebox.askyesno('Confirm ' + action_desc, message)
         if not confirm:
             return
 
-        # Use database helper to create the application and set categories
         try:
-            app_id = database.add_application(division_name, '', {}, dept_ids, notes='')
-            if app_id:
-                try:
+            if existing_id:
+                # Update existing application's relationships
+                database.link_app_to_departments(existing_id, dept_ids)
+                database.set_app_categories(existing_id, cat_ids)
+                database.touch_application(existing_id)
+                app_id = existing_id
+            else:
+                # Create new application
+                app_id = database.add_application(division_name, '', {}, dept_ids, notes='')
+                if app_id:
                     database.set_app_categories(app_id, cat_ids)
-                except Exception:
-                    # Non-fatal: continue
-                    pass
-                # Ensure last_modified updated when categories are set
-                try:
                     database.touch_application(app_id)
-                except Exception:
-                    pass
-                # Flash green before showing success (set explicitly)
+
+            if app_id:
                 try:
                     if hasattr(self, 'submit_button') and self.submit_button is not None:
                         self.submit_button.configure(style='Success.TButton')
                         self.submit_button.state(['!disabled'])
                 except Exception:
                     pass
-                messagebox.showinfo('Success', f'Created application for Division "{division_name}"')
+                messagebox.showinfo('Success', f'{action_desc}d application for Division "{division_name}"')
             else:
-                messagebox.showerror('Error', 'Failed to create application entry.')
+                messagebox.showerror('Error', 'Failed to process application entry.')
         except Exception as e:
-            messagebox.showerror('Error', f'Failed to create application: {e}')
+            messagebox.showerror('Error', f'Failed to {action_desc.lower()} application: {e}')
             return
 
         # Clear selections and refresh
@@ -3337,38 +3299,105 @@ class AppTracker(tk.Tk):
             messagebox.showinfo('Deleted', 'Application deleted.')
 
     def add_system_integration(self):
-        """
-        Opens a dialog to add a new system integration to the selected parent system
-        """
-        # Check if a parent system is selected
+        """Opens a dialog to add a new system integration to the selected parent system."""
+        def on_submit():
+            """Handle submission of the integration form."""
+            try:
+                name = name_entry.get().strip()
+                if not name:
+                    messagebox.showwarning('Validation Error', 'Integration name is required')
+                    return
+
+                fields = {
+                    'name': name,
+                    'vendor': vendor_entry.get().strip(),
+                    'notes': notes_text.get('1.0', 'end-1c').strip()
+                }
+                
+                # Collect and validate numeric fields
+                ratings = {}
+                for key in keys:
+                    try:
+                        value = factor_entries[key].get().strip()
+                        int_value = int(value) if value else 0
+                        ratings[key] = int_value
+                        fields[key.lower()] = str(int_value)
+                    except ValueError:
+                        messagebox.showwarning('Validation Error', f'{key} must be a number')
+                        return
+                
+                # Calculate risk score
+                score = ratings.get('Score', 0)
+                criticality = ratings.get('Criticality', 0)
+                fields['risk_score'] = (10 - score) * criticality
+
+                # Add to database
+                integration_id = database.add_system_integration(self.current_parent_system_id, fields)
+                if integration_id:
+                    if self.current_parent_system_id is not None:
+                        try:
+                            database.touch_application(int(self.current_parent_system_id))
+                        except Exception:
+                            pass
+                    
+                    messagebox.showinfo('Success', 'System integration added successfully')
+                    dialog.destroy()
+                    self.refresh_integration_table()
+                    
+                    # Highlight new row if possible
+                    try:
+                        new_iid = str(integration_id)
+                        if new_iid in self.integrations_tree.get_children(''):
+                            self.integrations_tree.see(new_iid)
+                            self.integrations_tree.selection_set(new_iid)
+                    except Exception:
+                        pass
+            except Exception as e:
+                messagebox.showerror('Error', f'Failed to add integration: {str(e)}')
+
         if self.current_parent_system_id is None:
             messagebox.showinfo('Add Integration', 'Please select a parent system first.')
             return
-            
-        # Create a dialog for adding integration
+
+        # Create and configure dialog
         dialog = tk.Toplevel(self)
-        dialog.title('Add System Integration')
-        dialog.geometry('500x650')  # Height to fit all elements including buttons
-        dialog.minsize(500, 650)    # Minimum size to show all elements
-        dialog.resizable(False, False)  # Fix the size to ensure proper layout
+        dialog.title('Edit Integration')
+        dialog.geometry('500x700')
+        dialog.minsize(500, 700)
+        dialog.resizable(False, False)
         dialog.transient(self)
         dialog.grab_set()
+
+        # Create main container with grid
+        main_container = ttk.Frame(dialog)
+        main_container.grid(row=0, column=0, sticky='nsew', padx=10, pady=10)
         
-        # Form elements
-        form_frame = ttk.Frame(dialog, padding=15)  # Increased padding
-        form_frame.pack(fill='both', expand=True, padx=10, pady=10)
+        # Configure dialog grid
+        dialog.grid_rowconfigure(0, weight=1)
+        dialog.grid_columnconfigure(0, weight=1)
+        
+        # Configure main container grid
+        main_container.grid_rowconfigure(0, weight=1)
+        main_container.grid_columnconfigure(0, weight=1)
+        
+        # Form frame setup with grid
+        form_frame = ttk.Frame(main_container, padding=15)
+        form_frame.grid(row=0, column=0, sticky='nsew')
+        
+        # Configure form frame grid
+        form_frame.grid_columnconfigure(1, weight=1)
         
         # Name and vendor fields
         ttk.Label(form_frame, text='Integration Name:', anchor='e').grid(row=0, column=0, sticky='e', pady=5, padx=5)
         name_entry = ttk.Entry(form_frame, width=40)
-        name_entry.grid(row=0, column=1, sticky='w', pady=5, padx=5)
+        name_entry.grid(row=0, column=1, sticky='ew', pady=5, padx=5)
         name_entry.focus_set()
         
         ttk.Label(form_frame, text='Vendor:', anchor='e').grid(row=1, column=0, sticky='e', pady=5, padx=5)
         vendor_entry = ttk.Entry(form_frame, width=40)
-        vendor_entry.grid(row=1, column=1, sticky='w', pady=5, padx=5)
+        vendor_entry.grid(row=1, column=1, sticky='ew', pady=5, padx=5)
         
-        # Factor entry fields (same as main form)
+        # Factor entry fields
         factor_entries = {}
         keys = ['Score', 'Need', 'Criticality', 'Installed', 'DisasterRecovery',
                 'Safety', 'Security', 'Monetary', 'CustomerService']
@@ -3384,16 +3413,18 @@ class AppTracker(tk.Tk):
         notes_text = tk.Text(form_frame, height=4, width=40, wrap='word')
         notes_text.grid(row=11, column=1, sticky='w', pady=5, padx=5)
         
-        # Add separator and button frame at the bottom
-        ttk.Separator(form_frame, orient='horizontal').grid(row=12, column=0, columnspan=2, sticky='ew', pady=(15, 5))
+        # Add separator
+        ttk.Separator(main_container, orient='horizontal').grid(row=1, column=0, sticky='ew', pady=(10, 5))
         
-        # Button frame at the bottom
-        button_frame = ttk.Frame(form_frame)
-        button_frame.grid(row=13, column=0, columnspan=2, sticky='ew', pady=10)
+        # Button frame at bottom
+        button_frame = ttk.Frame(main_container)
+        button_frame.grid(row=2, column=0, sticky='ew', pady=5)
         
-        # Center the buttons using grid
-        button_frame.columnconfigure(0, weight=1)  # Left padding
-        button_frame.columnconfigure(3, weight=1)  # Right padding
+        # Configure button frame grid
+        button_frame.grid_columnconfigure(0, weight=1)  # Push buttons to the right
+        
+        # Add buttons
+        # The buttons are now added below after the submit_integration function is defined
         
         def submit_integration():
             # Get values from form
@@ -3540,47 +3571,23 @@ class AppTracker(tk.Tk):
             except Exception as e:
                 messagebox.showerror('Error', f'Failed to add system integration: {e}')
         
-        # Create Submit and Cancel buttons
+        # Create buttons using grid
         submit_btn = ttk.Button(
-            button_frame,
-            text='Submit',
-            command=submit_integration,
+            button_frame, 
+            text='Update', 
+            command=submit_integration, 
             style='Primary.TButton',
             width=15
         )
         submit_btn.grid(row=0, column=1, padx=5)
         
         cancel_btn = ttk.Button(
-            button_frame,
-            text='Cancel',
+            button_frame, 
+            text='Cancel', 
             command=dialog.destroy,
             width=15
         )
-        cancel_btn.grid(row=0, column=2, padx=5)
-        # Add a separator above buttons for visual clarity
-        ttk.Separator(button_frame, orient='horizontal').pack(fill='x', pady=10)
-        
-        # Create a container for the buttons to center them
-        btn_container = ttk.Frame(button_frame)
-        btn_container.pack(pady=5, fill='x')
-        
-        # Make the submit button more prominent
-        submit_btn = ttk.Button(
-            btn_container, 
-            text='Submit', 
-            command=submit_integration, 
-            style='Primary.TButton',
-            width=15  # Make button wider
-        )
-        submit_btn.pack(side='right', padx=10)
-        
-        cancel_btn = ttk.Button(
-            btn_container, 
-            text='Cancel', 
-            command=dialog.destroy,
-            width=15  # Make button wider
-        )
-        cancel_btn.pack(side='right', padx=10)
+        cancel_btn.grid(row=0, column=0, padx=5)
     
     def import_csv_dialog(self):
         """
@@ -4871,20 +4878,62 @@ class AppTracker(tk.Tk):
             except Exception:
                 int_title = integration[2] if len(integration) > 2 else 'Edit Integration'
             dialog.title(f'Edit Integration: {int_title}')
-            dialog.geometry('500x650')
-            dialog.minsize(500, 650)
-            dialog.resizable(False, False)
+            dialog.geometry('520x640')
+            dialog.minsize(520, 480)
             dialog.transient(self)
             dialog.grab_set()
-            
-            # Form elements
-            form_frame = ttk.Frame(dialog, padding=15)
-            form_frame.pack(fill='both', expand=True, padx=10, pady=10)
-            
-            # Name and vendor fields
+
+            # Configure dialog grid (3 rows: form(scrollable), separator, buttons)
+            dialog.grid_rowconfigure(0, weight=1)
+            dialog.grid_rowconfigure(1, weight=0)
+            dialog.grid_rowconfigure(2, weight=0)
+            dialog.grid_columnconfigure(0, weight=1)
+
+            # Scrollable form area
+            content_container = ttk.Frame(dialog, padding=(12, 10, 12, 4))
+            content_container.grid(row=0, column=0, sticky='nsew')
+            content_container.grid_rowconfigure(0, weight=1)
+            content_container.grid_columnconfigure(0, weight=1)
+
+            canvas = tk.Canvas(content_container, highlightthickness=0, borderwidth=0)
+            vsb = ttk.Scrollbar(content_container, orient='vertical', command=canvas.yview)
+            canvas.configure(yscrollcommand=vsb.set)
+            canvas.grid(row=0, column=0, sticky='nsew')
+            vsb.grid(row=0, column=1, sticky='ns')
+
+            form_frame = ttk.Frame(canvas)
+            # Create a window inside the canvas
+            form_window = canvas.create_window((0, 0), window=form_frame, anchor='nw')
+
+            def _on_configure(event):
+                # Update scrollregion to include the whole frame
+                canvas.configure(scrollregion=canvas.bbox('all'))
+                # Resize inner frame window to canvas width
+                canvas.itemconfigure(form_window, width=canvas.winfo_width())
+
+            form_frame.bind('<Configure>', _on_configure)
+
+            # Mousewheel support
+            def _on_mousewheel(event):
+                delta = 0
+                if event.delta:  # Windows / MacOS
+                    delta = int(-1 * (event.delta / 120))
+                else:  # Linux uses event.num
+                    if event.num == 5:
+                        delta = 1
+                    elif event.num == 4:
+                        delta = -1
+                if delta:
+                    canvas.yview_scroll(delta, 'units')
+
+            canvas.bind_all('<MouseWheel>', _on_mousewheel)  # Windows / Mac
+            canvas.bind_all('<Button-4>', _on_mousewheel)     # Linux scroll up
+            canvas.bind_all('<Button-5>', _on_mousewheel)     # Linux scroll down
+
+            # Form content
             ttk.Label(form_frame, text='Integration Name:', anchor='e').grid(row=0, column=0, sticky='e', pady=5, padx=5)
-            name_entry = ttk.Entry(form_frame, width=40)
-            name_entry.grid(row=0, column=1, sticky='w', pady=5, padx=5)
+            name_entry = ttk.Entry(form_frame, width=44)
+            name_entry.grid(row=0, column=1, sticky='ew', pady=5, padx=5)
             try:
                 name_entry.insert(0, integration['name'] or "")
             except Exception:
@@ -4892,8 +4941,8 @@ class AppTracker(tk.Tk):
             name_entry.focus_set()
             
             ttk.Label(form_frame, text='Vendor:', anchor='e').grid(row=1, column=0, sticky='e', pady=5, padx=5)
-            vendor_entry = ttk.Entry(form_frame, width=40)
-            vendor_entry.grid(row=1, column=1, sticky='w', pady=5, padx=5)
+            vendor_entry = ttk.Entry(form_frame, width=44)
+            vendor_entry.grid(row=1, column=1, sticky='ew', pady=5, padx=5)
             try:
                 vendor_entry.insert(0, integration['vendor'] or "")
             except Exception:
@@ -4934,21 +4983,13 @@ class AppTracker(tk.Tk):
             
             # Notes field
             ttk.Label(form_frame, text='Notes:', anchor='e').grid(row=11, column=0, sticky='ne', pady=5, padx=5)
-            notes_text = tk.Text(form_frame, height=4, width=40, wrap='word')
-            notes_text.grid(row=11, column=1, sticky='w', pady=5, padx=5)
+            notes_text = tk.Text(form_frame, height=5, width=44, wrap='word')
+            notes_text.grid(row=11, column=1, sticky='ew', pady=5, padx=5)
             if integration[13]:  # Notes are at index 13 in the SQL query result
                 notes_text.insert('1.0', integration[13])
             
-            # Add separator and button frame at the bottom
-            ttk.Separator(form_frame, orient='horizontal').grid(row=12, column=0, columnspan=2, sticky='ew', pady=(15, 5))
-            
-            # Button frame at the bottom
-            button_frame = ttk.Frame(form_frame)
-            button_frame.grid(row=13, column=0, columnspan=2, sticky='ew', pady=10)
-            
-            # Center the buttons using grid
-            button_frame.columnconfigure(0, weight=1)  # Left padding
-            button_frame.columnconfigure(3, weight=1)  # Right padding
+            # Configure column expansion
+            form_frame.grid_columnconfigure(1, weight=1)
             
             def update_integration():
                 # Get values from form
@@ -5014,32 +5055,26 @@ class AppTracker(tk.Tk):
                     except Exception as e:
                         messagebox.showerror('Error', f'Failed to delete integration: {e}')
             
-            # Create Update, Delete and Cancel buttons
-            update_btn = ttk.Button(
-                button_frame,
-                text='Update',
-                command=update_integration,
-                style='Primary.TButton',
-                width=15
-            )
-            update_btn.grid(row=0, column=1, padx=5)
-            
-            delete_btn = ttk.Button(
-                button_frame,
-                text='Delete',
-                command=delete_integration,
-                style='Danger.TButton',  # Use a danger style if available
-                width=15
-            )
-            delete_btn.grid(row=0, column=2, padx=5)
-            
-            cancel_btn = ttk.Button(
-                button_frame,
-                text='Cancel',
-                command=dialog.destroy,
-                width=15
-            )
-            cancel_btn.grid(row=0, column=3, padx=5)
+            # Separator
+            sep = ttk.Separator(dialog, orient='horizontal')
+            sep.grid(row=1, column=0, sticky='ew', pady=(4, 6), padx=12)
+
+            # Button bar (fixed at bottom)
+            button_frame = ttk.Frame(dialog, padding=(12, 4, 12, 12))
+            button_frame.grid(row=2, column=0, sticky='ew')
+            button_frame.grid_columnconfigure(0, weight=1)  # spacer column
+            # Buttons in columns 1..3
+            update_btn = ttk.Button(button_frame, text='Update', command=update_integration, style='Primary.TButton', width=12)
+            delete_btn = ttk.Button(button_frame, text='Delete', command=delete_integration, style='Danger.TButton', width=12)
+            cancel_btn = ttk.Button(button_frame, text='Cancel', command=dialog.destroy, width=12)
+            # Place
+            update_btn.grid(row=0, column=1, padx=4)
+            delete_btn.grid(row=0, column=2, padx=4)
+            cancel_btn.grid(row=0, column=3, padx=4)
+
+            # Keyboard shortcuts
+            dialog.bind('<Return>', lambda _e: update_integration())
+            dialog.bind('<Escape>', lambda _e: dialog.destroy())
             
         except Exception as e:
             messagebox.showerror('Error', f'Failed to load integration for editing: {e}')

@@ -1,0 +1,34 @@
+# Created by pytest automatically.
+*.venv/
+.venv/
+G:\My Drive\Python\Projects\NVapps\.venv
+G:\My Drive\Python\Projects\NVapps\.venv\Lib\site-packages
+__pycache__
+.ipynb_checkpoints
+.vscode
+.DS_Store
+.idea
+*.log
+*.sqlite3
+*.db
+*.pyc
+*.pyo
+*.pyd
+*.swp
+*.swo
+*.bak
+*.tmp
+*.old
+*.orig
+*.rej
+*.class
+*.jar
+*.war
+*.ear
+*.zip
+*.tar.gz
+*.egg
+*.egg-info
+dist.venv/Scripts/python.exe
+.venv/Scripts/python.exe
+
