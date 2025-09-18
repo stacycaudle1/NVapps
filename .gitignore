@@ -1,0 +1,76 @@
+###############################
+# NVapps Project .gitignore   #
+# Generated: 2025-09-18       #
+###############################
+
+# --- Python bytecode / cache ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Virtual environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Packaging / build artifacts ---
+build/
+dist/
+*.egg-info/
+*.egg
+pip-wheel-metadata/
+
+# --- Test / coverage artifacts ---
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+pytestdebug.log
+
+# --- Tooling / IDE ---
+.vscode/**
+!.vscode/settings.json
+!.vscode/extensions.json
+.idea/
+*.code-workspace
+
+# --- Logs & runtime ---
+*.log
+logs/
+
+# --- Data / database ---
+*.db
+*.db-journal
+*.db.bak
+
+# --- Local exports / temp CSV scratch ---
+tmp_*.csv
+*.tmp
+~$*
+
+# --- OS / misc ---
+Thumbs.db
+.DS_Store
+desktop.ini
+
+# --- Python analysis / type checkers ---
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
+
+# --- Jupyter (precautionary) ---
+.ipynb_checkpoints/
+
+# --- Cache / artifacts from scripts ---
+export_*/
+
+# --- Environment / secrets ---
+*.env
+*.env.*
+.env.local
+
+# --- Notes ---
+# Remove or adjust the *.db ignore rules if you want to commit a seed database.
