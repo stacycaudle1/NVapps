@@ -3,58 +3,48 @@ from tkinter import ttk, messagebox, simpledialog
 from datetime import datetime
 import database
 
-# Color palette
-ACCENT = '#0078d4'       # primary accent (blue)
-WIN_BG = '#f6f9fc'       # window background
-HEADER_BG = '#2b579a'    # header background
-HEADER_FG = 'white'      # header foreground
-
-# Verbose logging toggle (set True for detailed console debug output)
+# Theme and config constants
+ACCENT = '#0078d4'       # Primary accent blue
+HEADER_BG = '#1f4e79'    # Darker header blue
+HEADER_FG = '#ffffff'    # Header text color
+WIN_BG = '#f5f5f5'       # Window background
 VERBOSE_LOG = False
 
-
 def get_risk_color(score):
-    """Map numeric risk score to color tags using new bands:
-    Low: 1-49 -> green, Med: 50-69 -> yellow, High: 70-100 -> red
+    """Return tag name for risk color based on score.
+
+    Thresholds:
+    - 70–100: 'red' (High)
+    - 40–69: 'yellow' (Medium)
+    - 0–39: 'green' (Low)
+    Any non-numeric or missing value defaults to 'green'.
     """
     try:
-        # Treat None or empty as no color
         if score is None:
-            return None
-        s = float(score)
-    except Exception:
-        return None
-
-    if s >= 70:
-        return 'red'
-    if s >= 50:
-        return 'yellow'
-    if s >= 1:
+            return 'green'
+        val = float(score)
+        if val >= 70:
+            return 'red'
+        if val >= 40:
+            return 'yellow'
         return 'green'
-    # zero or negative => no color
-    return None
+    except Exception:
+        return 'green'
+
 
 class AppTracker(tk.Tk):
     def __init__(self):
         super().__init__()
-        self.title('NVApps - Business Application Tracker')
-        self.geometry('1000x700')
-        self.minsize(900, 500)
-        # Open the application in full-screen mode
-        self.state('zoomed')
-        # apply a modern ttk style
-        self.setup_style()
-        # window background
+        try:
+            self.title('NV Applications')
+        except Exception:
+            pass
         try:
             self.configure(bg=WIN_BG)
         except Exception:
             pass
-        # Initialize search variables
-        self.search_entry = None
-        self.search_type_var = None
-        self.search_after_id = None  # For delayed search
-        database.initialize_database()  # Ensure DB schema is correct before anything else
-        # Ensure integration_categories join table exists for category-specific integration filtering
+
+        # Ensure supporting tables exist (best-effort)
         try:
             conn_schema = database.connect_db()
             cur_schema = conn_schema.cursor()
@@ -70,24 +60,43 @@ class AppTracker(tk.Tk):
         except Exception as e:
             if VERBOSE_LOG:
                 print(f"DEBUG: Failed to ensure integration_categories table exists: {e}")
-        self.create_widgets()
-        # Populate the department listbox after creating widgets
-        if VERBOSE_LOG:
-            print("DEBUG: Initializing departments")
-        departments = self.get_departments()
-        if VERBOSE_LOG:
-            print(f"DEBUG: Got departments: {departments}")
-        self.department_listbox.delete(0, 'end')
-        for dept_id, dept_name in departments:
+
+        # Build UI
+        try:
+            self.setup_style()
+        except Exception:
+            pass
+        try:
+            self.create_widgets()
+        except Exception:
+            pass
+
+        # Initial data population (best-effort; UI may not have these yet depending on layout)
+        try:
             if VERBOSE_LOG:
-                print(f"DEBUG: Inserting department: {dept_name}")
-            self.department_listbox.insert('end', dept_name)
-        # Populate categories listbox
+                print("DEBUG: Initializing departments")
+            departments = self.get_departments()
+            if VERBOSE_LOG:
+                print(f"DEBUG: Got departments: {departments}")
+            if hasattr(self, 'department_listbox') and self.department_listbox is not None:
+                self.department_listbox.delete(0, 'end')
+                for _dept_id, dept_name in departments:
+                    if VERBOSE_LOG:
+                        print(f"DEBUG: Inserting department: {dept_name}")
+                    self.department_listbox.insert('end', dept_name)
+        except Exception:
+            pass
+
         try:
             self.populate_category_listbox()
         except Exception:
             pass
-        self.refresh_table()
+
+        try:
+            self.refresh_table()
+        except Exception:
+            pass
+
         # Ensure submit button starts disabled & primary style
         try:
             if hasattr(self, 'submit_button') and self.submit_button is not None:
@@ -95,6 +104,7 @@ class AppTracker(tk.Tk):
                 self.submit_button.configure(style='Primary.TButton')
         except Exception:
             pass
+
 
     def setup_style(self):
         style = ttk.Style(self)
@@ -848,8 +858,8 @@ class AppTracker(tk.Tk):
         def _legend_chip_rf(parent, text, bg):
             tk.Label(parent, text=text, bg=bg, fg='black', padx=6, pady=2).pack(side='left', padx=3)
         _legend_chip_rf(risk_legend, 'High (≥70)', '#ffcccc')
-        _legend_chip_rf(risk_legend, 'Med (50–69)', '#fff2cc')
-        _legend_chip_rf(risk_legend, 'Low (1–49)', '#ccffcc')
+        _legend_chip_rf(risk_legend, 'Med (40–69)', '#fff2cc')
+        _legend_chip_rf(risk_legend, 'Low (1–39)', '#ccffcc')
         
         # Controls frame for risk range selection
         controls_frame = ttk.Frame(risk_frame)
@@ -859,7 +869,7 @@ class AppTracker(tk.Tk):
         ttk.Label(controls_frame, text="Risk Range:").pack(side='left', padx=5)
         risk_var = tk.StringVar(value="All")
         risk_options = ttk.Combobox(controls_frame, textvariable=risk_var, 
-                                   values=["All", "Low (1-49)", "Med (50-69)", "High (70+)"],
+                                   values=["All", "Low (1-39)", "Med (40-69)", "High (70+)"],
                                    width=15, state='readonly')
         risk_options.pack(side='left', padx=5)
 
@@ -903,10 +913,10 @@ class AppTracker(tk.Tk):
 
             # Build the risk range condition based on integration risk scores
             risk_selection = risk_var.get()
-            if risk_selection == "Low (1-49)":
-                risk_condition = "AND i.risk_score < 50"
-            elif risk_selection == "Med (50-69)":
-                risk_condition = "AND i.risk_score >= 50 AND i.risk_score < 70"
+            if risk_selection == "Low (1-39)":
+                risk_condition = "AND i.risk_score < 40 AND i.risk_score >= 1"
+            elif risk_selection == "Med (40-69)":
+                risk_condition = "AND i.risk_score >= 40 AND i.risk_score < 70"
             elif risk_selection == "High (70+)":
                 risk_condition = "AND i.risk_score >= 70"
             else:
@@ -1090,7 +1100,7 @@ class AppTracker(tk.Tk):
                                         rv = 0
                                     if rv >= 70:
                                         fill = high_fill
-                                    elif rv >= 50:
+                                    elif rv >= 40:
                                         fill = med_fill
                                     else:
                                         fill = low_fill
@@ -1201,7 +1211,7 @@ class AppTracker(tk.Tk):
                                 rv = float(risk) if risk not in (None, "") else 0
                             except Exception:
                                 rv = 0
-                            fill = high_fill if rv >= 70 else med_fill if rv >= 50 else low_fill
+                            fill = high_fill if rv >= 70 else med_fill if rv >= 40 else low_fill
                             for cc in range(1, 9):
                                 ws_risk.cell(row=r, column=cc).fill = fill
                             r += 1
@@ -1246,7 +1256,7 @@ class AppTracker(tk.Tk):
                     fill = None
                     if rv >= 70:
                         fill = high_fill
-                    elif rv >= 50:
+                    elif rv >= 40:
                         fill = med_fill
                     elif rv > 0:
                         fill = low_fill
@@ -1265,7 +1275,7 @@ class AppTracker(tk.Tk):
                             mlen = l
                     ws_bu.column_dimensions[chr(64+c)].width = min(mlen + 2, 50)
 
-                # --- Division Sheet ---
+                # --- Categories Sheet (if category tab exists in this session) ---
                 ws_div = wb.create_sheet("Divisions")
                 ws_div.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
                 td = ws_div.cell(row=1, column=1, value=f"Division Risk - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -1292,7 +1302,7 @@ class AppTracker(tk.Tk):
                     fill = None
                     if rv >= 70:
                         fill = high_fill
-                    elif rv >= 50:
+                    elif rv >= 40:
                         fill = med_fill
                     elif rv > 0:
                         fill = low_fill
@@ -1310,6 +1320,59 @@ class AppTracker(tk.Tk):
                         if l > mlen:
                             mlen = l
                     ws_div.column_dimensions[chr(64+c)].width = min(mlen + 2, 50)
+
+                # --- Summary Sheet (moved to last, enhanced) ---
+                # --- Categories Sheet (if category tab exists in this session) ---
+                try:
+                    ws_cat = wb.create_sheet("Categories")
+                    ws_cat.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+                    tcat = ws_cat.cell(row=1, column=1, value=f"Category Risk - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                    tcat.font = Font(bold=True, size=14)
+                    tcat.alignment = Alignment(horizontal='center')
+                    cat_headers = ["Category", "App Count", "Avg Risk", "Status"]
+                    for c, h in enumerate(cat_headers, start=1):
+                        hc = ws_cat.cell(row=3, column=c, value=h)
+                        hc.fill = header_fill
+                        hc.font = header_font
+                        hc.alignment = center
+                        hc.border = border
+                    cr = 4
+                    try:
+                        for iid in cat_tree.get_children():
+                            category, app_count, avg_risk, status = cat_tree.item(iid, 'values')
+                            rowvals = [category, app_count, avg_risk, status]
+                            for c, val in enumerate(rowvals, start=1):
+                                cell = ws_cat.cell(row=cr, column=c, value=val)
+                                cell.border = border
+                            try:
+                                rv = float(avg_risk) if avg_risk not in (None, '', '0') else 0
+                            except Exception:
+                                rv = 0
+                            fill = None
+                            if rv >= 70:
+                                fill = high_fill
+                            elif rv >= 40:
+                                fill = med_fill
+                            elif rv > 0:
+                                fill = low_fill
+                            if fill:
+                                for cc in range(1, 5):
+                                    ws_cat.cell(row=cr, column=cc).fill = fill
+                            cr += 1
+                    except Exception:
+                        pass
+                    for c in range(1, 5):
+                        mlen = 0
+                        for rr in range(1, cr):
+                            v = ws_cat.cell(row=rr, column=c).value
+                            if v is None:
+                                continue
+                            l = len(str(v))
+                            if l > mlen:
+                                mlen = l
+                        ws_cat.column_dimensions[chr(64+c)].width = min(mlen + 2, 50)
+                except Exception:
+                    pass
 
                 # --- Summary Sheet (moved to last, enhanced) ---
                 try:
@@ -1340,8 +1403,8 @@ class AppTracker(tk.Tk):
                     unique_divisions = sum(len(divisions.keys()) for divisions in grouped.values())
                     avg_risk_overall = round(sum(risk_values)/len(risk_values), 2) if risk_values else 0
                     high_count = len([v for v in risk_values if v >= 70])
-                    med_count = len([v for v in risk_values if 50 <= v < 70])
-                    low_count = len([v for v in risk_values if 1 <= v < 50])
+                    med_count = len([v for v in risk_values if 40 <= v < 70])
+                    low_count = len([v for v in risk_values if 1 <= v < 40])
                     dist_total = max(len(risk_values), 1)  # avoid div by zero (exclude zero/missing from distribution)
                     high_pct = f"{(high_count/dist_total)*100:.1f}%" if dist_total else '0.0%'
                     med_pct = f"{(med_count/dist_total)*100:.1f}%" if dist_total else '0.0%'
@@ -1355,8 +1418,8 @@ class AppTracker(tk.Tk):
                         ("Integrations With Missing/Zero Risk", zero_or_missing, zero_pct),
                         ("Avg Integration Risk (non-zero)", avg_risk_overall, ''),
                         ("High Risk Integrations (≥70)", high_count, high_pct),
-                        ("Medium Risk Integrations (50–69)", med_count, med_pct),
-                        ("Low Risk Integrations (1–49)", low_count, low_pct),
+                        ("Medium Risk Integrations (40–69)", med_count, med_pct),
+                        ("Low Risk Integrations (1–39)", low_count, low_pct),
                     ]
 
                     # Headers
@@ -1439,8 +1502,8 @@ class AppTracker(tk.Tk):
         def _legend_chip_bu(parent, text, bg):
             tk.Label(parent, text=text, bg=bg, fg='black', padx=6, pady=2).pack(side='left', padx=3)
         _legend_chip_bu(bu_legend, 'High (≥70)', '#ffcccc')
-        _legend_chip_bu(bu_legend, 'Med (50–69)', '#fff2cc')
-        _legend_chip_bu(bu_legend, 'Low (1–49)', '#ccffcc')
+        _legend_chip_bu(bu_legend, 'Med (40–69)', '#fff2cc')
+        _legend_chip_bu(bu_legend, 'Low (1–39)', '#ccffcc')
         
         # Business Unit Risk Tree using shared helper
         bu_columns = ('Business Unit', 'App Count', 'Avg Risk', 'Status')
@@ -1473,8 +1536,8 @@ class AppTracker(tk.Tk):
         def _legend_chip_div(parent, text, bg):
             tk.Label(parent, text=text, bg=bg, fg='black', padx=6, pady=2).pack(side='left', padx=3)
         _legend_chip_div(div_legend, 'High (≥70)', '#ffcccc')
-        _legend_chip_div(div_legend, 'Med (50–69)', '#fff2cc')
-        _legend_chip_div(div_legend, 'Low (1–49)', '#ccffcc')
+        _legend_chip_div(div_legend, 'Med (40–69)', '#fff2cc')
+        _legend_chip_div(div_legend, 'Low (1–39)', '#ccffcc')
         
         # Division Risk Tree using shared helper (same structure as BU Risk)
         div_columns = ('Division', 'App Count', 'Avg Risk', 'Status')
@@ -1600,7 +1663,7 @@ class AppTracker(tk.Tk):
                     from openpyxl.styles import PatternFill
                     if rv >= 70:
                         fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-                    elif rv >= 50:
+                    elif rv >= 40:
                         fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
                     elif rv > 0:
                         fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
@@ -1644,6 +1707,207 @@ class AppTracker(tk.Tk):
 
         # Initial population
         update_div_table()
+        
+        # Category Risk Tab (new)
+        cat_frame = ttk.Frame(notebook)
+        notebook.add(cat_frame, text='Category Risk')
+        
+        # Header with legend for Category Risk
+        cat_header = tk.Frame(cat_frame, bg=WIN_BG)
+        cat_header.pack(fill='x', pady=(10, 15))
+        cat_label = tk.Label(cat_header, text='Category Risk Overview', 
+                          font=('Segoe UI', 14, 'bold'), fg=ACCENT, bg=WIN_BG)
+        cat_label.pack(side='left', padx=15)
+        cat_legend = tk.Frame(cat_header, bg=WIN_BG)
+        cat_legend.pack(side='right', padx=15)
+        def _legend_chip_cat(parent, text, bg):
+            tk.Label(parent, text=text, bg=bg, fg='black', padx=6, pady=2).pack(side='left', padx=3)
+        _legend_chip_cat(cat_legend, 'High (≥70)', '#ffcccc')
+        _legend_chip_cat(cat_legend, 'Med (40–69)', '#fff2cc')
+        _legend_chip_cat(cat_legend, 'Low (1–39)', '#ccffcc')
+        
+        # Category Risk Tree using shared helper
+        cat_columns = ('Category', 'App Count', 'Avg Risk', 'Status')
+        cat_widths = {'Category': 320, 'App Count': 110, 'Avg Risk': 110, 'Status': 120}
+        cat_formatters = {
+            'App Count': lambda v: '' if v in (None, '') else f"{int(v)}",
+            'Avg Risk': lambda v: '' if v in (None, '') else f"{float(v):.1f}",
+        }
+        _, cat_tree, cat_api = self.create_table_with_scrollbars(
+            cat_frame,
+            cat_columns,
+            widths=cat_widths,
+            formatters=cat_formatters,
+            sort_handler=self.report_sort_table,
+            pack_opts={'fill': 'both', 'expand': True, 'padx': 15, 'pady': 5}
+        )
+        
+        # Populate category data via a refreshable function
+        def update_cat_table():
+            # Clear table
+            cat_tree.delete(*cat_tree.get_children())
+            conn = database.connect_db()
+            c = conn.cursor()
+            # Aggregate by category using average integration risk across apps in the category.
+            # Count applications linked via either the many-to-many table (application_categories)
+            # OR the legacy applications.category_id column (union to avoid undercounting).
+            c.execute('''
+                WITH cat_integrations AS (
+                    SELECT ic.category_id,
+                           si.id AS integration_id,
+                           si.parent_app_id,
+                           si.risk_score
+                    FROM integration_categories ic
+                    JOIN system_integrations si ON si.id = ic.integration_id
+                )
+                SELECT c.name AS category,
+                       COUNT(DISTINCT ci.integration_id) AS app_count,
+                       AVG(ci.risk_score) AS avg_integration_risk
+                FROM categories c
+                LEFT JOIN cat_integrations ci ON ci.category_id = c.id
+                GROUP BY c.id, c.name
+                ORDER BY c.name ASC
+            ''')
+            results = c.fetchall()
+            for category, count, avg_risk in results:
+                if avg_risk is None or avg_risk < 1:
+                    status = 'No Data'
+                    raw_values = (category, count, 0.0, status)
+                    cat_tree.insert('', 'end', values=cat_api['format'](raw_values))
+                else:
+                    try:
+                        avg = float(avg_risk)
+                    except Exception:
+                        avg = 0.0
+                    tag = get_risk_color(avg)
+                    if tag == 'red':
+                        status = 'High'
+                    elif tag == 'yellow':
+                        status = 'Med'
+                    else:
+                        status = 'Low'
+                    raw_values = (category, count, avg, status)
+                    formatted = cat_api['format'](raw_values)
+                    if tag:
+                        cat_tree.insert('', 'end', values=formatted, tags=(tag,))
+                    else:
+                        cat_tree.insert('', 'end', values=formatted)
+            # Configure row colors based on risk (do this once per refresh)
+            cat_tree.tag_configure('red', background='#ffcccc')
+            cat_tree.tag_configure('yellow', background='#fff2cc')
+            cat_tree.tag_configure('green', background='#ccffcc')
+            conn.close()
+            # Zebra striping
+            try:
+                cat_api['apply_zebra']()
+            except Exception:
+                pass
+            # Update Category last-refresh timestamp in in-memory state and update label
+            try:
+                state = self._report_refresh_state.get('cat')
+                if state is None:
+                    self._report_refresh_state['cat'] = {'label': None, 'ts': datetime.now()}
+                else:
+                    state['ts'] = datetime.now()
+                _update_report_label('cat')
+            except Exception:
+                pass
+        
+        # Controls row for Category with Refresh button and Export
+        cat_controls = ttk.Frame(cat_frame)
+        cat_controls.pack(fill='x', padx=15, pady=(0, 5))
+        ttk.Button(cat_controls, text='Refresh', command=update_cat_table, style='Primary.TButton').pack(side='left')
+        def export_category_report():
+            try:
+                rows = []
+                for iid in cat_tree.get_children():
+                    rows.append(cat_tree.item(iid, 'values'))  # Category, App Count, Avg Risk, Status
+                if not rows:
+                    messagebox.showinfo("Export", "No category data to export.")
+                    return
+                try:
+                    from openpyxl import Workbook
+                    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+                except ImportError:
+                    messagebox.showerror("Missing Dependency", "openpyxl is required. Please install with pip install openpyxl")
+                    return
+                wb = Workbook()
+                from typing import Any
+                ws: Any = wb.active  # type: ignore
+                ws.title = "Category Risk"
+                header_fill = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
+                header_font = Font(bold=True, color="FFFFFF")
+                center = Alignment(horizontal='center')
+                thin = Side(style='thin', color='888888')
+                border = Border(left=thin, right=thin, top=thin, bottom=thin)
+                ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=4)
+                title = ws.cell(row=1, column=1, value=f"Category Risk Overview - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                title.font = Font(bold=True, size=14)
+                title.alignment = Alignment(horizontal='center')
+                headers = ["Category", "App Count", "Avg Risk", "Status"]
+                for col, h in enumerate(headers, start=1):
+                    ccell = ws.cell(row=3, column=col, value=h)
+                    ccell.fill = header_fill
+                    ccell.font = header_font
+                    ccell.alignment = center
+                    ccell.border = border
+                row_idx = 4
+                for (category, app_count, avg_risk, status) in rows:
+                    data = [category, app_count, avg_risk, status]
+                    for col, val in enumerate(data, start=1):
+                        cell = ws.cell(row=row_idx, column=col, value=val)
+                        cell.border = border
+                    try:
+                        rv = float(avg_risk) if avg_risk not in (None, '', '0') else 0
+                    except Exception:
+                        rv = 0
+                    from openpyxl.styles import PatternFill
+                    if rv >= 70:
+                        fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
+                    elif rv >= 40:
+                        fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+                    elif rv > 0:
+                        fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+                    else:
+                        fill = None
+                    if fill:
+                        for c in range(1, 5):
+                            ws.cell(row=row_idx, column=c).fill = fill
+                    row_idx += 1
+                for col in range(1, 5):
+                    max_len = 0
+                    for r in range(1, row_idx):
+                        val = ws.cell(row=r, column=col).value
+                        if val is None:
+                            continue
+                        l = len(str(val))
+                        if l > max_len:
+                            max_len = l
+                    ws.column_dimensions[chr(64+col)].width = min(max_len + 2, 50)
+                from tkinter import filedialog
+                default_name = f"category_risk_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+                path = filedialog.asksaveasfilename(defaultextension='.xlsx', initialfile=default_name, filetypes=[('Excel Workbook','*.xlsx')])
+                if not path:
+                    return
+                wb.save(path)
+                _show_toast("Category export saved")
+            except Exception as e:
+                messagebox.showerror("Export Failed", f"Category export failed: {e}")
+        ttk.Button(cat_controls, text='Export XLSX', command=export_category_report).pack(side='left', padx=5)
+        cat_last_lbl = ttk.Label(cat_controls, text='Last refresh: N/A')
+        cat_last_lbl.pack(side='left', padx=(8,0))
+        # Register CAT label widget for elapsed updates
+        try:
+            st = self._report_refresh_state.get('cat')
+            if st is None:
+                self._report_refresh_state['cat'] = {'label': cat_last_lbl, 'ts': None}
+            else:
+                st['label'] = cat_last_lbl
+        except Exception:
+            pass
+
+        # Initial population
+        update_cat_table()
         
         # Ensure Risk Range tab stays selected by default now that System Criticality is removed
         try:
@@ -1763,7 +2027,7 @@ class AppTracker(tk.Tk):
                     from openpyxl.styles import PatternFill
                     if rv >= 70:
                         fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-                    elif rv >= 50:
+                    elif rv >= 40:
                         fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
                     elif rv > 0:
                         fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
@@ -2294,8 +2558,8 @@ class AppTracker(tk.Tk):
             lbl = tk.Label(parent, text=text, bg=bg, fg='black', padx=6, pady=2)
             lbl.pack(side='left', padx=3)
         _legend_chip(legend_frame, 'High (≥70)', '#ffcccc')
-        _legend_chip(legend_frame, 'Med (50–69)', '#fff2cc')
-        _legend_chip(legend_frame, 'Low (1–49)', '#ccffcc')
+        _legend_chip(legend_frame, 'Med (40–69)', '#fff2cc')
+        _legend_chip(legend_frame, 'Low (1–39)', '#ccffcc')
         
         # Reduce visible columns to only what's required by the user: Business Unit, Division, Category, Last Modified
         self.tree = ttk.Treeview(
@@ -3423,15 +3687,15 @@ class AppTracker(tk.Tk):
         - customer_service | CustomerService | customerservice | integration_customerservice
         """
         weights = {
-            'score': 1.0,
-            'need': 1.0,
-            'criticality': 1.2,
-            'installed': 1.0,
-            'disaster_recovery': 1.5,
-            'safety': 1.5,
-            'security': 1.5,
-            'monetary': 1.2,
-            'customer_service': 1.0,
+            'score': 10.0,
+            'need': 0.01,
+            'criticality': 0.1,
+            'installed': 0.01,
+            'disaster_recovery': 0.05,
+            'safety': 0.01,
+            'security': 0.01,
+            'monetary': 0.01,
+            'customer_service': 0.01,
         }
         aliases = {
             'score': ['score', 'Score', 'integration_score'],
@@ -3467,7 +3731,10 @@ class AppTracker(tk.Tk):
         for k, w in weights.items():
             v = _get_factor(k)
             if v > 0:
-                weighted_total += v * w
+                if k == 'score':
+                    weighted_total += (10 - v) * w  # Invert score: lower score = higher risk
+                else:
+                    weighted_total += v * w
                 max_total += 10 * w
         return 0.0 if max_total == 0 else (weighted_total / max_total) * 100.0
 

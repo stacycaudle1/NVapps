@@ -776,7 +776,7 @@ def dr_priority_band(risk_score):
         
     if score >= 70:
         return 'High'
-    if score >= 50:
+    if score >= 40:
         return 'Med'
     if score >= 1:
         return 'Low'
