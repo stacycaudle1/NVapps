@@ -1072,30 +1072,17 @@ class AppTracker(tk.Tk):
                 for (bu, division, name, vendor, score, crit, risk, notes) in rows:
                     grouped[bu][division].append((name, vendor, score, crit, risk, notes))
 
+                # Removed Score Guide legend code (not relevant in export)
+
+                # Write data rows
                 current_row = 4
-                for bu in sorted(grouped.keys()):
-                    # Business Unit header row
-                    ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=8)
-                    bu_cell = ws.cell(row=current_row, column=1, value=f"Business Unit: {bu}")
-                    bu_cell.font = bold_font
-                    bu_cell.fill = bu_fill
-                    bu_cell.border = border
-                    current_row += 1
-                    for division in sorted(grouped[bu].keys()):
-                        # Division header
-                        ws.merge_cells(start_row=current_row, start_column=1, end_row=current_row, end_column=8)
-                        div_cell = ws.cell(row=current_row, column=1, value=f"Division: {division}")
-                        div_cell.font = bold_font
-                        div_cell.fill = div_fill
-                        div_cell.border = border
-                        current_row += 1
-                        # Data rows
-                        for (name, vendor, score, crit, risk, notes) in grouped[bu][division]:
-                            row_vals = [bu, division, name, vendor, score, crit, risk, notes]
-                            for col, val in enumerate(row_vals, start=1):
+                for bu, divisions in grouped.items():
+                    for division, items in divisions.items():
+                        for (name, vendor, score, crit, risk, notes) in items:
+                            for col, val in enumerate([bu, division, name, vendor, score, crit, risk, notes], start=1):
                                 cell = ws.cell(row=current_row, column=col, value=val)
                                 cell.border = border
-                                # Apply risk based coloring on entire data row based on risk value
+                                cell.alignment = center
                                 if col == 7:  # risk column used for color selection
                                     try:
                                         rv = float(val) if val not in (None, "") else 0
@@ -3421,70 +3408,78 @@ class AppTracker(tk.Tk):
             self.refresh_table()
             messagebox.showinfo('Deleted', 'Application deleted.')
 
-    def add_system_integration(self):
-        """Opens a dialog to add a new system integration to the selected parent system."""
-        def on_submit():
-            """Handle submission of the integration form."""
+    def _calculate_integration_risk(self, factors: dict) -> float:
+        """Calculate the weighted risk percentage (0–100) for an integration.
+
+        Accepts a dict with any of these keys per factor (case-insensitive):
+        - score | Score | integration_score
+        - need | Need | integration_need
+        - criticality | Criticality | integration_criticality
+        - installed | Installed | integration_installed
+        - disaster_recovery | DisasterRecovery | disasterrecovery | integration_dr | dr
+        - safety | Safety | integration_safety
+        - security | Security | integration_security
+        - monetary | Monetary | integration_monetary
+        - customer_service | CustomerService | customerservice | integration_customerservice
+        """
+        weights = {
+            'score': 1.0,
+            'need': 1.0,
+            'criticality': 1.2,
+            'installed': 1.0,
+            'disaster_recovery': 1.5,
+            'safety': 1.5,
+            'security': 1.5,
+            'monetary': 1.2,
+            'customer_service': 1.0,
+        }
+        aliases = {
+            'score': ['score', 'Score', 'integration_score'],
+            'need': ['need', 'Need', 'integration_need'],
+            'criticality': ['criticality', 'Criticality', 'integration_criticality'],
+            'installed': ['installed', 'Installed', 'integration_installed'],
+            'disaster_recovery': ['disaster_recovery', 'DisasterRecovery', 'disasterrecovery', 'integration_dr', 'dr'],
+            'safety': ['safety', 'Safety', 'integration_safety'],
+            'security': ['security', 'Security', 'integration_security'],
+            'monetary': ['monetary', 'Monetary', 'integration_monetary'],
+            'customer_service': ['customer_service', 'CustomerService', 'customerservice', 'integration_customerservice'],
+        }
+
+        def _get_int(val):
             try:
-                name = name_entry.get().strip()
-                if not name:
-                    messagebox.showwarning('Validation Error', 'Integration name is required')
-                    return
+                return int(val)
+            except Exception:
+                try:
+                    return int(float(val))
+                except Exception:
+                    return 0
 
-                fields = {
-                    'name': name,
-                    'vendor': vendor_entry.get().strip(),
-                    'notes': notes_text.get('1.0', 'end-1c').strip()
-                }
-                
-                # Collect and validate numeric fields
-                ratings = {}
-                for key in keys:
-                    try:
-                        value = factor_entries[key].get().strip()
-                        int_value = int(value) if value else 0
-                        ratings[key] = int_value
-                        fields[key.lower()] = str(int_value)
-                    except ValueError:
-                        messagebox.showwarning('Validation Error', f'{key} must be a number')
-                        return
-                
-                # Calculate risk score
-                score = ratings.get('Score', 0)
-                criticality = ratings.get('Criticality', 0)
-                fields['risk_score'] = (10 - score) * criticality
+        def _get_factor(key: str) -> int:
+            names = aliases.get(key, [key])
+            for nm in names:
+                if nm in factors and factors.get(nm) is not None:
+                    return _get_int(factors.get(nm))
+            return 0
 
-                # Add to database
-                integration_id = database.add_system_integration(self.current_parent_system_id, fields)
-                if integration_id:
-                    if self.current_parent_system_id is not None:
-                        try:
-                            database.touch_application(int(self.current_parent_system_id))
-                        except Exception:
-                            pass
-                    
-                    messagebox.showinfo('Success', 'System integration added successfully')
-                    dialog.destroy()
-                    self.refresh_integration_table()
-                    
-                    # Highlight new row if possible
-                    try:
-                        new_iid = str(integration_id)
-                        if new_iid in self.integrations_tree.get_children(''):
-                            self.integrations_tree.see(new_iid)
-                            self.integrations_tree.selection_set(new_iid)
-                    except Exception:
-                        pass
-            except Exception as e:
-                messagebox.showerror('Error', f'Failed to add integration: {str(e)}')
+        # Exclude factors with value 0 from the calculation (treat 0 as N/A)
+        weighted_total = 0.0
+        max_total = 0.0
+        for k, w in weights.items():
+            v = _get_factor(k)
+            if v > 0:
+                weighted_total += v * w
+                max_total += 10 * w
+        return 0.0 if max_total == 0 else (weighted_total / max_total) * 100.0
 
+    def add_system_integration(self):
+        """Open dialog to add a new system integration to the selected parent system."""
         if self.current_parent_system_id is None:
             messagebox.showinfo('Add Integration', 'Please select a parent system first.')
             return
 
         # Create and configure dialog
         dialog = tk.Toplevel(self)
-        dialog.title('Edit Integration')
+        dialog.title('Add Integration')
         dialog.geometry('650x700')
         dialog.minsize(650, 700)
         dialog.resizable(False, False)
@@ -3494,94 +3489,225 @@ class AppTracker(tk.Tk):
         # Create main container with grid
         main_container = ttk.Frame(dialog)
         main_container.grid(row=0, column=0, sticky='nsew', padx=10, pady=10)
-        
+
         # Configure dialog grid
         dialog.grid_rowconfigure(0, weight=1)
         dialog.grid_columnconfigure(0, weight=1)
-        
-        # Configure main container grid (2 columns: legend | form)
+
+        # Configure main container grid (two columns: form | score guide)
         main_container.grid_rowconfigure(0, weight=1)
-        main_container.grid_columnconfigure(0, weight=0)  # legend fixed
-        main_container.grid_columnconfigure(1, weight=1)  # form grows
-        
-        # Score legend on the left
-        # Edit the labels below to adjust the guidance shown next to the form.
-        # To remove the legend entirely, delete this LabelFrame block and set
-        # form_frame.grid(row=0, column=0, ...) and drop columnspan=2 on the separator/button row.
-        legend_frame = ttk.LabelFrame(main_container, text='Score Guide', style='Guide.TLabelframe')
-        legend_frame.grid(row=0, column=0, sticky='nsw', padx=(0, 15))
-        
-        # Build legend using ranges to match the posted guide
-        legend_rows = [
-            ('1–3',  'Nice to Have'),
-            ('4–6',  'Affects Efficiency'),
-            ('7–9',  'Affects Security, Safety, Revenue, Customer Service'),
-            ('10 -', 'Critical Operational Impact'),
-        ]
-        # Two-column layout: range | description
-        for r, (rng, desc) in enumerate(legend_rows):
-            ttk.Label(legend_frame, text=rng, width=5, anchor='e', style='GuideNumber.TLabel').grid(
-                row=r, column=0, sticky='ne', padx=(10, 8), pady=(6, 6)
-            )
-            ttk.Label(legend_frame, text=desc, wraplength=260, justify='left', style='GuideText.TLabel').grid(
-                row=r, column=1, sticky='nw', padx=(0, 10), pady=(6, 6)
-            )
-        # Footer guidance text below legend
-        ttk.Label(
-            legend_frame,
-            text='Rate each attribute for this integration using this Score Guide',
-            wraplength=300,
-            justify='left',
-            style='GuideText.TLabel'
-        ).grid(row=len(legend_rows), column=0, columnspan=2, sticky='we', padx=10, pady=(10, 6))
-        
-        
+        main_container.grid_columnconfigure(0, weight=1)  # form column grows
+        # Slightly wider guide column for better readability
+        main_container.grid_columnconfigure(1, weight=0, minsize=280)  # guide column fixed width
+
         # Form frame setup with grid
         form_frame = ttk.Frame(main_container, padding=15)
-        form_frame.grid(row=0, column=1, sticky='nsew')
-        
+        form_frame.grid(row=0, column=0, sticky='nsew')
+
         # Configure form frame grid
         form_frame.grid_columnconfigure(1, weight=1)
-        
+
         # Name and vendor fields
         ttk.Label(form_frame, text='Integration Name:', anchor='e', style='FormLabel.TLabel').grid(row=0, column=0, sticky='e', pady=5, padx=5)
         name_entry = ttk.Entry(form_frame, width=40)
         name_entry.grid(row=0, column=1, sticky='ew', pady=5, padx=5)
         name_entry.focus_set()
-        
+
         ttk.Label(form_frame, text='Vendor:', anchor='e', style='FormLabel.TLabel').grid(row=1, column=0, sticky='e', pady=5, padx=5)
         vendor_entry = ttk.Entry(form_frame, width=40)
         vendor_entry.grid(row=1, column=1, sticky='ew', pady=5, padx=5)
-        
+
         # Factor entry fields
         factor_entries = {}
-        keys = ['Score', 'Need', 'Criticality', 'Installed', 'DisasterRecovery',
-                'Safety', 'Security', 'Monetary', 'CustomerService']
+        keys = ['Score', 'Need', 'Criticality', 'Installed', 'DisasterRecovery', 'Safety', 'Security', 'Monetary', 'CustomerService']
 
         for idx, key in enumerate(keys, start=2):
             ttk.Label(form_frame, text=f'{key}:', anchor='e', style='FormLabel.TLabel').grid(row=idx, column=0, sticky='e', pady=5, padx=5)
             entry = ttk.Entry(form_frame, width=5)
             entry.grid(row=idx, column=1, sticky='w', pady=5, padx=5)
             factor_entries[key] = entry
-        
+
         # Notes field
         ttk.Label(form_frame, text='Notes:', anchor='e', style='FormLabel.TLabel').grid(row=11, column=0, sticky='ne', pady=5, padx=5)
         notes_text = tk.Text(form_frame, height=4, width=40, wrap='word')
         notes_text.grid(row=11, column=1, sticky='w', pady=5, padx=5)
-        
+
+        # Empty Score Guide labelframe on the right
+        guide_frame = ttk.Labelframe(main_container, text='Score Guide', padding=12, style='Guide.TLabelframe')
+        guide_frame.grid(row=0, column=1, sticky='n', padx=(10, 0), pady=10)
+        # Title + body to improve readability and match style
+        baseline_msg = 'Entering a 0 for any factor will exclude that factor from the Risk calculation. Ratings should be from 1 (low) to 10 (high).'
+        guide_title_label = ttk.Label(guide_frame, text='Note --- ', anchor='w', style='GuideNumber.TLabel')
+        guide_title_label.grid(row=0, column=0, sticky='w', pady=(0, 2))
+        # Subtle divider between title and body
+        ttk.Separator(guide_frame, orient='horizontal').grid(row=1, column=0, sticky='ew', pady=(0, 6))
+        guide_body_label = ttk.Label(guide_frame, text=baseline_msg, justify='left', anchor='nw', wraplength=260, style='GuideText.TLabel')
+        guide_body_label.grid(row=2, column=0, sticky='nw')
+        # Spacer to ensure visibility (empty box area)
+        guide_spacer = ttk.Frame(guide_frame, width=280, height=220)
+        guide_spacer.grid(row=3, column=0)
+        guide_spacer.grid_propagate(False)
+
+        # Dynamic guide: show guidance text for each field on focus/click
+        if 'Score' in factor_entries:
+            SCORE_GUIDE_TEXT = (
+                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                "1. Score (overall performance/reliability)\n"
+                "    • Businesses still value baseline performance and reputation, but it’s often overshadowed by security/DR.\n"
+                "    • Typical score today: 6–8 for production systems, 3–5 for side tools.\n"
+                "    • Base this on your business needs. How is the over all operation or performance of this system?"
+            )
+            def _show_score_guide(_e=None):
+                try:
+                    guide_title_label.config(text='Score')
+                    guide_body_label.config(text=SCORE_GUIDE_TEXT)
+                except Exception:
+                    pass
+            factor_entries['Score'].bind('<FocusIn>', _show_score_guide)
+            factor_entries['Score'].bind('<Button-1>', _show_score_guide)
+
+        if 'Need' in factor_entries:
+            NEED_GUIDE_TEXT = (
+                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                "2. Need (is this required or optional?)\n"
+                "    • Since most organizations are digital-first now, “need” is often rated higher across the board.\n"
+                "    • Typical score today: 7–10 for core systems, 3–6 for support systems."
+            )
+            def _show_need_guide(_e=None):
+                try:
+                    guide_title_label.config(text='Need')
+                    guide_body_label.config(text=NEED_GUIDE_TEXT)
+                except Exception:
+                    pass
+            factor_entries['Need'].bind('<FocusIn>', _show_need_guide)
+            factor_entries['Need'].bind('<Button-1>', _show_need_guide)
+
+        if 'Criticality' in factor_entries:
+            CRIT_GUIDE_TEXT = (
+                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                "3. Criticality (impact if it fails)\n"
+                "    • Businesses rank this very high; DR and BCP plans are built around it.\n"
+                "    • Typical score today: 8–10 for finance, healthcare, or aviation systems; 5–7 for back-office."
+            )
+            def _show_crit_guide(_e=None):
+                try:
+                    guide_title_label.config(text='Criticality')
+                    guide_body_label.config(text=CRIT_GUIDE_TEXT)
+                except Exception:
+                    pass
+            factor_entries['Criticality'].bind('<FocusIn>', _show_crit_guide)
+            factor_entries['Criticality'].bind('<Button-1>', _show_crit_guide)
+
+        if 'Installed' in factor_entries:
+            INST_GUIDE_TEXT = (
+                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                "4. Installed (how entrenched/mature it is)\n"
+                "    • Legacy/entrenched systems = high score (because risk of change is big).\n"
+                "    • New SaaS with light adoption = lower.\n"
+                "    • Typical score today: 5–9, depending on age and footprint."
+            )
+            def _show_inst_guide(_e=None):
+                try:
+                    guide_title_label.config(text='Installed')
+                    guide_body_label.config(text=INST_GUIDE_TEXT)
+                except Exception:
+                    pass
+            factor_entries['Installed'].bind('<FocusIn>', _show_inst_guide)
+            factor_entries['Installed'].bind('<Button-1>', _show_inst_guide)
+
+        if 'DisasterRecovery' in factor_entries:
+            DR_GUIDE_TEXT = (
+                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                "5. Disaster Recovery\n"
+                "    • A top board-level priority (especially after ransomware, cloud outages).\n"
+                "    • Typical score today: 8–10 for regulated industries, 6–8 for SMBs."
+            )
+            def _show_dr_guide(_e=None):
+                try:
+                    guide_title_label.config(text='Disaster Recovery')
+                    guide_body_label.config(text=DR_GUIDE_TEXT)
+                except Exception:
+                    pass
+            factor_entries['DisasterRecovery'].bind('<FocusIn>', _show_dr_guide)
+            factor_entries['DisasterRecovery'].bind('<Button-1>', _show_dr_guide)
+
+        if 'Safety' in factor_entries:
+            SAFETY_GUIDE_TEXT = (
+                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                "6. Safety\n"
+                "    • Huge in sectors like aviation, healthcare, manufacturing; less so in retail or marketing.\n"
+                "    • Typical score today:\n"
+                "        ○ Safety-critical = 9–10\n"
+                "        ○ Non-safety systems = 2–4"
+            )
+            def _show_safety_guide(_e=None):
+                try:
+                    guide_title_label.config(text='Safety')
+                    guide_body_label.config(text=SAFETY_GUIDE_TEXT)
+                except Exception:
+                    pass
+            factor_entries['Safety'].bind('<FocusIn>', _show_safety_guide)
+            factor_entries['Safety'].bind('<Button-1>', _show_safety_guide)
+
+        if 'Security' in factor_entries:
+            SECURITY_GUIDE_TEXT = (
+                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                "7. Security\n"
+                "    • Always ranked near the top (breaches = financial + reputation disaster).\n"
+                "    • Typical score today: 9–10 for external/integrated systems, 6–8 for internal."
+            )
+            def _show_security_guide(_e=None):
+                try:
+                    guide_title_label.config(text='Security')
+                    guide_body_label.config(text=SECURITY_GUIDE_TEXT)
+                except Exception:
+                    pass
+            factor_entries['Security'].bind('<FocusIn>', _show_security_guide)
+            factor_entries['Security'].bind('<Button-1>', _show_security_guide)
+
+        if 'Monetary' in factor_entries:
+            MONETARY_GUIDE_TEXT = (
+                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                "8. Monetary (financial impact)\n"
+                "    • With economic uncertainty, financial ties are weighted heavily.\n"
+                "    • Typical score today: 8–10 if directly tied to revenue, 4–6 if indirect."
+            )
+            def _show_monetary_guide(_e=None):
+                try:
+                    guide_title_label.config(text='Monetary')
+                    guide_body_label.config(text=MONETARY_GUIDE_TEXT)
+                except Exception:
+                    pass
+            factor_entries['Monetary'].bind('<FocusIn>', _show_monetary_guide)
+            factor_entries['Monetary'].bind('<Button-1>', _show_monetary_guide)
+
+        if 'CustomerService' in factor_entries:
+            CS_GUIDE_TEXT = (
+                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                "9. Customer Service\n"
+                "    • Experience is often a differentiator in competitive industries.\n"
+                "    • Typical score today: 7–10 for portals, apps, call centers; 3–5 for purely internal."
+            )
+            def _show_cs_guide(_e=None):
+                try:
+                    guide_title_label.config(text='Customer Service')
+                    guide_body_label.config(text=CS_GUIDE_TEXT)
+                except Exception:
+                    pass
+            factor_entries['CustomerService'].bind('<FocusIn>', _show_cs_guide)
+            factor_entries['CustomerService'].bind('<Button-1>', _show_cs_guide)
+
         # Add separator
         ttk.Separator(main_container, orient='horizontal').grid(row=1, column=0, columnspan=2, sticky='ew', pady=(10, 5))
-        
+
         # Button frame at bottom
         button_frame = ttk.Frame(main_container)
         button_frame.grid(row=2, column=0, columnspan=2, sticky='ew', pady=5)
-        
+
         # Configure button frame grid
         button_frame.grid_columnconfigure(0, weight=1)  # Push buttons to the right
-        
-        # Add buttons
-        # The buttons are now added below after the submit_integration function is defined
-        
+
+        # Submit handler
         def submit_integration():
             # Get values from form
             try:
@@ -3589,40 +3715,43 @@ class AppTracker(tk.Tk):
                 if not name:
                     messagebox.showwarning('Validation Error', 'Integration name is required')
                     return
-                
+
                 # Create a dictionary with appropriate types for each field
-                # The database.add_system_integration expects Dict[str, object]
-                fields = {}
-                
-                # Add string values
-                fields['name'] = name
-                fields['vendor'] = vendor_entry.get().strip()
-                fields['notes'] = notes_text.get('1.0', 'end-1c').strip()
-                
+                fields: dict[str, object] = {
+                    'name': name,
+                    'vendor': vendor_entry.get().strip(),
+                    'notes': notes_text.get('1.0', 'end-1c').strip(),
+                }
+
                 # Get factor values and create ratings dictionary for score calculation
                 ratings = {}
+                db_key_map = {
+                    'Score': 'score',
+                    'Need': 'need',
+                    'Criticality': 'criticality',
+                    'Installed': 'installed',
+                    'DisasterRecovery': 'disaster_recovery',
+                    'Safety': 'safety',
+                    'Security': 'security',
+                    'Monetary': 'monetary',
+                    'CustomerService': 'customer_service',
+                }
                 for key in keys:
-                    try:
-                        value = factor_entries[key].get().strip()
-                        if value:
-                            # Store as int in the ratings dict for calculation
+                    value = factor_entries[key].get().strip()
+                    if value:
+                        try:
                             int_value = int(value)
-                            ratings[key] = int_value
-                            # Store as int in fields dict for database
-                            fields[key.lower()] = int_value
-                        else:
-                            ratings[key] = 0
-                            fields[key.lower()] = 0
-                    except ValueError:
-                        messagebox.showwarning('Validation Error', f'{key} must be a number')
-                        return
-                
-                # Calculate risk score
-                # Calculate risk score using (10 - score) * criticality
-                s = int(ratings.get('Score', 0)) if isinstance(ratings, dict) else int(ratings[0])
-                cval = int(ratings.get('Criticality', 0)) if isinstance(ratings, dict) else int(ratings[2])
-                fields['risk_score'] = (10 - s) * cval  # Store as int/float
-                
+                        except ValueError:
+                            messagebox.showwarning('Validation Error', f'{key} must be a number')
+                            return
+                    else:
+                        int_value = 0
+                    ratings[key] = int_value
+                    fields[db_key_map.get(key, key.lower())] = int_value
+
+                # Calculate risk score (weighted percentage 0–100); keep string type for legacy flow
+                fields['risk_score'] = f"{self._calculate_integration_risk(ratings):.2f}"
+
                 # Submit integration to database
                 integration_id = database.add_system_integration(self.current_parent_system_id, fields)
                 if integration_id:
@@ -3654,10 +3783,9 @@ class AppTracker(tk.Tk):
                                 cur_link.execute('INSERT OR IGNORE INTO integration_categories (integration_id, category_id) VALUES (?, ?)', (integration_id, cat_id))
                                 conn_link.commit()
                             conn_link.close()
-                        except Exception as link_ex:
-                            if VERBOSE_LOG:
-                                print(f"DEBUG: Failed to link integration {integration_id} to category '{selected_cat}': {link_ex}")
-                    messagebox.showinfo('Success', 'System integration submitted successfully')
+                        except Exception:
+                            pass
+                    messagebox.showinfo('Success', 'System integration added successfully')
                     dialog.destroy()
                     # Refresh the integrations table
                     self.refresh_integration_table()
@@ -3726,20 +3854,20 @@ class AppTracker(tk.Tk):
                     messagebox.showerror('Error', 'Failed to submit system integration')
             except Exception as e:
                 messagebox.showerror('Error', f'Failed to add system integration: {e}')
-        
+
         # Create buttons using grid
         submit_btn = ttk.Button(
-            button_frame, 
-            text='Update', 
-            command=submit_integration, 
+            button_frame,
+            text='Add',
+            command=submit_integration,
             style='Primary.TButton',
             width=15
         )
         submit_btn.grid(row=0, column=1, padx=5)
-        
+
         cancel_btn = ttk.Button(
-            button_frame, 
-            text='Cancel', 
+            button_frame,
+            text='Cancel',
             command=dialog.destroy,
             style='Secondary.TButton',
             width=15
@@ -4389,10 +4517,19 @@ class AppTracker(tk.Tk):
                             print(f"DEBUG: Processing integration {int_name} for app {app_name} (ID: {app_id})")
                             try:
                                 cat_ids_for_app = []  # ensure defined for later debug logging
-                                # Calculate risk score using the standard formula before inserting
-                                s = int_score if int_score is not None else 0
-                                c = int_criticality or 0
-                                risk_score = float(max(0, (10 - s) * c))
+                                # Calculate risk score using weighted percentage before inserting
+                                ratings = {
+                                    'Score': int_score or 0,
+                                    'Need': int_need or 0,
+                                    'Criticality': int_criticality or 0,
+                                    'Installed': int_installed or 0,
+                                    'DisasterRecovery': int_dr or 0,
+                                    'Safety': int_safety or 0,
+                                    'Security': int_security or 0,
+                                    'Monetary': int_monetary or 0,
+                                    'CustomerService': int_customer_service or 0,
+                                }
+                                risk_score = float(self._calculate_integration_risk(ratings))
 
                                 print(f"DEBUG: Inserting integration with risk score {risk_score}")
                                 # Insert new integration
@@ -5041,42 +5178,19 @@ class AppTracker(tk.Tk):
             dialog.transient(self)
             dialog.grab_set()
 
-            # Main container with 2 columns: legend | form
+            # Main container with 2 columns: form | score guide
             main_container = ttk.Frame(dialog)
             main_container.grid(row=0, column=0, sticky='nsew', padx=10, pady=10)
             dialog.grid_rowconfigure(0, weight=1)
             dialog.grid_columnconfigure(0, weight=1)
             main_container.grid_rowconfigure(0, weight=1)
-            main_container.grid_columnconfigure(0, weight=0)
-            main_container.grid_columnconfigure(1, weight=1)
-
-            # Score legend (same as add_system_integration)
-            legend_frame = ttk.LabelFrame(main_container, text='Score Guide', style='Guide.TLabelframe')
-            legend_frame.grid(row=0, column=0, sticky='nsw', padx=(0, 15))
-            legend_rows = [
-                ('1–3',  'Nice to Have'),
-                ('4–6',  'Affects Efficiency'),
-                ('7–9',  'Affects Security, Safety, Revenue, Customer Service'),
-                ('10 -', 'Critical Operational Impact'),
-            ]
-            for r, (rng, desc) in enumerate(legend_rows):
-                ttk.Label(legend_frame, text=rng, width=5, anchor='e', style='GuideNumber.TLabel').grid(
-                    row=r, column=0, sticky='ne', padx=(10, 8), pady=(6, 6)
-                )
-                ttk.Label(legend_frame, text=desc, wraplength=260, justify='left', style='GuideText.TLabel').grid(
-                    row=r, column=1, sticky='nw', padx=(0, 10), pady=(6, 6)
-                )
-            ttk.Label(
-                legend_frame,
-                text='Rate each attribute for this integration using this Score Guide',
-                wraplength=300,
-                justify='left',
-                style='GuideText.TLabel'
-            ).grid(row=len(legend_rows), column=0, columnspan=2, sticky='we', padx=10, pady=(10, 6))
+            main_container.grid_columnconfigure(0, weight=1)  # form grows
+            # Slightly wider guide column for better readability
+            main_container.grid_columnconfigure(1, weight=0, minsize=280)  # guide fixed
 
             # Form area
             form_frame = ttk.Frame(main_container, padding=15)
-            form_frame.grid(row=0, column=1, sticky='nsew')
+            form_frame.grid(row=0, column=0, sticky='nsew')
             form_frame.grid_columnconfigure(1, weight=1)
 
             # Name & Vendor
@@ -5104,22 +5218,39 @@ class AppTracker(tk.Tk):
                 'Score': 4, 'Need': 5, 'Criticality': 6, 'Installed': 7, 'DisasterRecovery': 8,
                 'Safety': 9, 'Security': 10, 'Monetary': 11, 'CustomerService': 12
             }
+            db_key_map_prefill = {
+                'Score': 'score',
+                'Need': 'need',
+                'Criticality': 'criticality',
+                'Installed': 'installed',
+                'DisasterRecovery': 'disaster_recovery',
+                'Safety': 'safety',
+                'Security': 'security',
+                'Monetary': 'monetary',
+                'CustomerService': 'customer_service',
+            }
             for idx, key in enumerate(keys, start=2):
                 ttk.Label(form_frame, text=f'{key}:', anchor='e', style='FormLabel.TLabel').grid(row=idx, column=0, sticky='e', pady=5, padx=5)
                 entry = ttk.Entry(form_frame, width=5)
                 entry.grid(row=idx, column=1, sticky='w', pady=5, padx=5)
                 # Pre-fill
                 try:
-                    if hasattr(integration, 'keys') and key.lower() in integration.keys() and integration[key.lower()] is not None:
-                        entry.insert(0, str(integration[key.lower()]))
-                    elif integration[factor_indices[key]] is not None:
-                        entry.insert(0, str(integration[factor_indices[key]]))
-                except Exception:
-                    try:
+                    inserted = False
+                    if hasattr(integration, 'keys'):
+                        # Prefer snake_case db key when available
+                        dbk = db_key_map_prefill.get(key, key.lower())
+                        if dbk in integration and integration[dbk] is not None:
+                            entry.insert(0, str(integration[dbk]))
+                            inserted = True
+                        elif key.lower() in integration and integration[key.lower()] is not None:
+                            entry.insert(0, str(integration[key.lower()]))
+                            inserted = True
+                    if not inserted:
+                        # Try tuple index fallback
                         if integration[factor_indices[key]] is not None:
                             entry.insert(0, str(integration[factor_indices[key]]))
-                    except Exception:
-                        pass
+                except Exception:
+                    pass
                 factor_entries[key] = entry
 
             # Notes
@@ -5133,6 +5264,169 @@ class AppTracker(tk.Tk):
             if existing_notes:
                 notes_text.insert('1.0', existing_notes)
 
+            # Empty Score Guide labelframe on the right
+            guide_frame = ttk.Labelframe(main_container, text='Score Guide', padding=12, style='Guide.TLabelframe')
+            guide_frame.grid(row=0, column=1, sticky='n', padx=(10, 0), pady=10)
+            # Title + body to improve readability and match style
+            baseline_msg = 'Entering a 0 for any factor will exclude that factor from the Risk calculation. Ratings should be from 1 (low) to 10 (high).'
+            guide_title_label = ttk.Label(guide_frame, text='Note --- ', anchor='w', style='GuideNumber.TLabel')
+            guide_title_label.grid(row=0, column=0, sticky='w', pady=(0, 2))
+            ttk.Separator(guide_frame, orient='horizontal').grid(row=1, column=0, sticky='ew', pady=(0, 6))
+            guide_body_label = ttk.Label(guide_frame, text=baseline_msg, justify='left', anchor='nw', wraplength=260, style='GuideText.TLabel')
+            guide_body_label.grid(row=2, column=0, sticky='nw')
+            # Spacer to ensure visibility (empty box)
+            guide_spacer = ttk.Frame(guide_frame, width=280, height=220)
+            guide_spacer.grid(row=3, column=0)
+            guide_spacer.grid_propagate(False)
+
+            # Dynamic guide: show guidance text for each field on focus/click
+            if 'Score' in factor_entries:
+                SCORE_GUIDE_TEXT = (
+                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                    "1. Score (overall performance/reliability)\n"
+                    "    • Businesses still value baseline performance and reputation, but it’s often overshadowed by security/DR.\n"
+                    "    • Typical score today: 6–8 for production systems, 3–5 for side tools.\n"
+                    "    • Base this on your business needs. How is the over all operation or performance of this system?"
+                )
+                def _show_score_guide(_e=None):
+                    try:
+                        guide_title_label.config(text='Score')
+                        guide_body_label.config(text=SCORE_GUIDE_TEXT)
+                    except Exception:
+                        pass
+                factor_entries['Score'].bind('<FocusIn>', _show_score_guide)
+                factor_entries['Score'].bind('<Button-1>', _show_score_guide)
+
+            if 'Need' in factor_entries:
+                NEED_GUIDE_TEXT = (
+                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                    "2. Need (is this required or optional?)\n"
+                    "    • Since most organizations are digital-first now, “need” is often rated higher across the board.\n"
+                    "    • Typical score today: 7–10 for core systems, 3–6 for support systems."
+                )
+                def _show_need_guide(_e=None):
+                    try:
+                        guide_title_label.config(text='Need')
+                        guide_body_label.config(text=NEED_GUIDE_TEXT)
+                    except Exception:
+                        pass
+                factor_entries['Need'].bind('<FocusIn>', _show_need_guide)
+                factor_entries['Need'].bind('<Button-1>', _show_need_guide)
+
+            if 'Criticality' in factor_entries:
+                CRIT_GUIDE_TEXT = (
+                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                    "3. Criticality (impact if it fails)\n"
+                    "    • Businesses rank this very high; DR and BCP plans are built around it.\n"
+                    "    • Typical score today: 8–10 for finance, healthcare, or aviation systems; 5–7 for back-office."
+                )
+                def _show_crit_guide(_e=None):
+                    try:
+                        guide_title_label.config(text='Criticality')
+                        guide_body_label.config(text=CRIT_GUIDE_TEXT)
+                    except Exception:
+                        pass
+                factor_entries['Criticality'].bind('<FocusIn>', _show_crit_guide)
+                factor_entries['Criticality'].bind('<Button-1>', _show_crit_guide)
+
+            if 'Installed' in factor_entries:
+                INST_GUIDE_TEXT = (
+                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                    "4. Installed (how entrenched/mature it is)\n"
+                    "    • Legacy/entrenched systems = high score (because risk of change is big).\n"
+                    "    • New SaaS with light adoption = lower.\n"
+                    "    • Typical score today: 5–9, depending on age and footprint."
+                )
+                def _show_inst_guide(_e=None):
+                    try:
+                        guide_title_label.config(text='Installed')
+                        guide_body_label.config(text=INST_GUIDE_TEXT)
+                    except Exception:
+                        pass
+                factor_entries['Installed'].bind('<FocusIn>', _show_inst_guide)
+                factor_entries['Installed'].bind('<Button-1>', _show_inst_guide)
+
+            if 'DisasterRecovery' in factor_entries:
+                DR_GUIDE_TEXT = (
+                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                    "5. Disaster Recovery\n"
+                    "    • A top board-level priority (especially after ransomware, cloud outages).\n"
+                    "    • Typical score today: 8–10 for regulated industries, 6–8 for SMBs."
+                )
+                def _show_dr_guide(_e=None):
+                    try:
+                        guide_title_label.config(text='Disaster Recovery')
+                        guide_body_label.config(text=DR_GUIDE_TEXT)
+                    except Exception:
+                        pass
+                factor_entries['DisasterRecovery'].bind('<FocusIn>', _show_dr_guide)
+                factor_entries['DisasterRecovery'].bind('<Button-1>', _show_dr_guide)
+
+            if 'Safety' in factor_entries:
+                SAFETY_GUIDE_TEXT = (
+                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                    "6. Safety\n"
+                    "    • Huge in sectors like aviation, healthcare, manufacturing; less so in retail or marketing.\n"
+                    "    • Typical score today:\n"
+                    "        ○ Safety-critical = 9–10\n"
+                    "        ○ Non-safety systems = 2–4"
+                )
+                def _show_safety_guide(_e=None):
+                    try:
+                        guide_title_label.config(text='Safety')
+                        guide_body_label.config(text=SAFETY_GUIDE_TEXT)
+                    except Exception:
+                        pass
+                factor_entries['Safety'].bind('<FocusIn>', _show_safety_guide)
+                factor_entries['Safety'].bind('<Button-1>', _show_safety_guide)
+
+            if 'Security' in factor_entries:
+                SECURITY_GUIDE_TEXT = (
+                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                    "7. Security\n"
+                    "    • Always ranked near the top (breaches = financial + reputation disaster).\n"
+                    "    • Typical score today: 9–10 for external/integrated systems, 6–8 for internal."
+                )
+                def _show_security_guide(_e=None):
+                    try:
+                        guide_title_label.config(text='Security')
+                        guide_body_label.config(text=SECURITY_GUIDE_TEXT)
+                    except Exception:
+                        pass
+                factor_entries['Security'].bind('<FocusIn>', _show_security_guide)
+                factor_entries['Security'].bind('<Button-1>', _show_security_guide)
+
+            if 'Monetary' in factor_entries:
+                MONETARY_GUIDE_TEXT = (
+                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                    "8. Monetary (financial impact)\n"
+                    "    • With economic uncertainty, financial ties are weighted heavily.\n"
+                    "    • Typical score today: 8–10 if directly tied to revenue, 4–6 if indirect."
+                )
+                def _show_monetary_guide(_e=None):
+                    try:
+                        guide_title_label.config(text='Monetary')
+                        guide_body_label.config(text=MONETARY_GUIDE_TEXT)
+                    except Exception:
+                        pass
+                factor_entries['Monetary'].bind('<FocusIn>', _show_monetary_guide)
+                factor_entries['Monetary'].bind('<Button-1>', _show_monetary_guide)
+
+            if 'CustomerService' in factor_entries:
+                CS_GUIDE_TEXT = (
+                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
+                    "9. Customer Service\n"
+                    "    • Experience is often a differentiator in competitive industries.\n"
+                    "    • Typical score today: 7–10 for portals, apps, call centers; 3–5 for purely internal."
+                )
+                def _show_cs_guide(_e=None):
+                    try:
+                        guide_title_label.config(text='Customer Service')
+                        guide_body_label.config(text=CS_GUIDE_TEXT)
+                    except Exception:
+                        pass
+                factor_entries['CustomerService'].bind('<FocusIn>', _show_cs_guide)
+                factor_entries['CustomerService'].bind('<Button-1>', _show_cs_guide)
             # Separator under content
             ttk.Separator(main_container, orient='horizontal').grid(row=1, column=0, columnspan=2, sticky='ew', pady=(10, 5))
 
@@ -5154,23 +5448,32 @@ class AppTracker(tk.Tk):
                     fields['notes'] = notes_text.get('1.0', 'end-1c').strip()
 
                     ratings: dict[str, int] = {}
+                    db_key_map = {
+                        'Score': 'score',
+                        'Need': 'need',
+                        'Criticality': 'criticality',
+                        'Installed': 'installed',
+                        'DisasterRecovery': 'disaster_recovery',
+                        'Safety': 'safety',
+                        'Security': 'security',
+                        'Monetary': 'monetary',
+                        'CustomerService': 'customer_service',
+                    }
                     for key in keys:
                         try:
                             value = factor_entries[key].get().strip()
                             if value:
                                 iv = int(value)
                                 ratings[key] = iv
-                                fields[key.lower()] = iv
+                                fields[db_key_map.get(key, key.lower())] = iv
                             else:
                                 ratings[key] = 0
-                                fields[key.lower()] = 0
+                                fields[db_key_map.get(key, key.lower())] = 0
                         except ValueError:
                             messagebox.showwarning('Validation Error', f'{key} must be a number')
                             return
-
-                    s = int(ratings.get('Score', 0)) if isinstance(ratings, dict) else 0
-                    cval = int(ratings.get('Criticality', 0)) if isinstance(ratings, dict) else 0
-                    fields['risk_score'] = (10 - s) * cval
+                    # Weighted risk percentage 0–100
+                    fields['risk_score'] = float(self._calculate_integration_risk(ratings))
 
                     success = database.update_system_integration(integration_id, fields)
                     if success:
