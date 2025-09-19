@@ -3551,11 +3551,13 @@ class AppTracker(tk.Tk):
         # Dynamic guide: show guidance text for each field on focus/click
         if 'Score' in factor_entries:
             SCORE_GUIDE_TEXT = (
-                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                "1. Score (overall performance/reliability)\n"
-                "    • Businesses still value baseline performance and reputation, but it’s often overshadowed by security/DR.\n"
-                "    • Typical score today: 6–8 for production systems, 3–5 for side tools.\n"
-                "    • Base this on your business needs. How is the over all operation or performance of this system?"
+                "Guiding Question\n"
+                "• How would you rate the overall performance and reliability of this system today?\n\n"
+                "Scoring Help\n"
+                "• 1–3: Poor/unstable performance or frequent issues\n"
+                "• 4–6: Adequate for current needs but with notable limitations\n"
+                "• 7–8: Strong performance/reliability with minor gaps\n"
+                "• 9–10: Excellent/mission-grade performance and reliability"
             )
             def _show_score_guide(_e=None):
                 try:
@@ -3568,10 +3570,13 @@ class AppTracker(tk.Tk):
 
         if 'Need' in factor_entries:
             NEED_GUIDE_TEXT = (
-                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                "2. Need (is this required or optional?)\n"
-                "    • Since most organizations are digital-first now, “need” is often rated higher across the board.\n"
-                "    • Typical score today: 7–10 for core systems, 3–6 for support systems."
+                "Guiding Question\n"
+                "• Is this system required to operate the business, or is it optional/nice-to-have?\n\n"
+                "Scoring Help\n"
+                "• 1–3: Optional; workarounds readily available\n"
+                "• 4–6: Helpful but not strictly required; alternatives exist\n"
+                "• 7–8: Required for multiple teams or core workflows\n"
+                "• 9–10: Absolutely required to operate or meet obligations"
             )
             def _show_need_guide(_e=None):
                 try:
@@ -3584,10 +3589,13 @@ class AppTracker(tk.Tk):
 
         if 'Criticality' in factor_entries:
             CRIT_GUIDE_TEXT = (
-                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                "3. Criticality (impact if it fails)\n"
-                "    • Businesses rank this very high; DR and BCP plans are built around it.\n"
-                "    • Typical score today: 8–10 for finance, healthcare, or aviation systems; 5–7 for back-office."
+                "Guiding Question\n"
+                "• What is the business impact if this system is unavailable or fails?\n\n"
+                "Scoring Help\n"
+                "• 1–3: Minor inconvenience; small/localized impact\n"
+                "• 4–6: Moderate productivity loss; delays but manageable\n"
+                "• 7–8: Major disruption to critical processes\n"
+                "• 9–10: Immediate stoppage/safety/regulatory impact"
             )
             def _show_crit_guide(_e=None):
                 try:
@@ -3600,11 +3608,13 @@ class AppTracker(tk.Tk):
 
         if 'Installed' in factor_entries:
             INST_GUIDE_TEXT = (
-                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                "4. Installed (how entrenched/mature it is)\n"
-                "    • Legacy/entrenched systems = high score (because risk of change is big).\n"
-                "    • New SaaS with light adoption = lower.\n"
-                "    • Typical score today: 5–9, depending on age and footprint."
+                "Guiding Question\n"
+                "• How entrenched and widely adopted is this system across the organization?\n\n"
+                "Scoring Help\n"
+                "• 1–3: Pilot/limited use; easy to replace\n"
+                "• 4–6: Moderate adoption; switching cost exists but manageable\n"
+                "• 7–8: Widely adopted; high dependency across teams\n"
+                "• 9–10: Deeply entrenched; very high switching cost/risk"
             )
             def _show_inst_guide(_e=None):
                 try:
@@ -3617,10 +3627,13 @@ class AppTracker(tk.Tk):
 
         if 'DisasterRecovery' in factor_entries:
             DR_GUIDE_TEXT = (
-                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                "5. Disaster Recovery\n"
-                "    • A top board-level priority (especially after ransomware, cloud outages).\n"
-                "    • Typical score today: 8–10 for regulated industries, 6–8 for SMBs."
+                "Guiding Question\n"
+                "• How quickly must this system be recovered after an outage, and how much data loss is tolerable?\n\n"
+                "Scoring Help\n"
+                "• 1–3: Long RTO/RPO acceptable; daily backups sufficient\n"
+                "• 4–6: Recovery within hours required; some data loss acceptable\n"
+                "• 7–8: Near real-time recovery/replication expected\n"
+                "• 9–10: Continuous availability; near-zero downtime/data loss"
             )
             def _show_dr_guide(_e=None):
                 try:
@@ -3633,12 +3646,14 @@ class AppTracker(tk.Tk):
 
         if 'Safety' in factor_entries:
             SAFETY_GUIDE_TEXT = (
-                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                "6. Safety\n"
-                "    • Huge in sectors like aviation, healthcare, manufacturing; less so in retail or marketing.\n"
-                "    • Typical score today:\n"
-                "        ○ Safety-critical = 9–10\n"
-                "        ○ Non-safety systems = 2–4"
+                "Guiding Question\n"
+                "• Could failure of this system impact human safety or regulatory health/safety obligations?\n\n"
+                "Scoring Help\n"
+                "• 1–2: No relation to safety\n"
+                "• 3–4: Indirect/low safety relevance\n"
+                "• 5–6: Some safety implication depending on context\n"
+                "• 7–8: High safety implications in certain scenarios\n"
+                "• 9–10: Life/safety critical"
             )
             def _show_safety_guide(_e=None):
                 try:
@@ -3651,10 +3666,13 @@ class AppTracker(tk.Tk):
 
         if 'Security' in factor_entries:
             SECURITY_GUIDE_TEXT = (
-                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                "7. Security\n"
-                "    • Always ranked near the top (breaches = financial + reputation disaster).\n"
-                "    • Typical score today: 9–10 for external/integrated systems, 6–8 for internal."
+                "Guiding Question\n"
+                "• What is the security exposure if this system is compromised or misused?\n\n"
+                "Scoring Help\n"
+                "• 1–3: Isolated/low-sensitivity data; limited access\n"
+                "• 4–6: Internal data with moderate sensitivity\n"
+                "• 7–8: Handles sensitive/regulated data or external integrations\n"
+                "• 9–10: High-risk target; critical/regulated data and broad access"
             )
             def _show_security_guide(_e=None):
                 try:
@@ -3667,10 +3685,13 @@ class AppTracker(tk.Tk):
 
         if 'Monetary' in factor_entries:
             MONETARY_GUIDE_TEXT = (
-                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                "8. Monetary (financial impact)\n"
-                "    • With economic uncertainty, financial ties are weighted heavily.\n"
-                "    • Typical score today: 8–10 if directly tied to revenue, 4–6 if indirect."
+                "Guiding Question\n"
+                "• What is the direct financial impact of downtime, failure, or poor performance?\n\n"
+                "Scoring Help\n"
+                "• 1–3: Minimal/indirect cost impact\n"
+                "• 4–6: Moderate costs or revenue impact\n"
+                "• 7–8: High revenue impact or material cost exposure\n"
+                "• 9–10: Immediate material revenue loss/penalties"
             )
             def _show_monetary_guide(_e=None):
                 try:
@@ -3683,10 +3704,13 @@ class AppTracker(tk.Tk):
 
         if 'CustomerService' in factor_entries:
             CS_GUIDE_TEXT = (
-                "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                "9. Customer Service\n"
-                "    • Experience is often a differentiator in competitive industries.\n"
-                "    • Typical score today: 7–10 for portals, apps, call centers; 3–5 for purely internal."
+                "Guiding Question\n"
+                "• How directly does this system affect the customer experience or service quality?\n\n"
+                "Scoring Help\n"
+                "• 1–3: Internal-only; no direct customer effect\n"
+                "• 4–6: Indirect impact on customer interactions\n"
+                "• 7–8: Customer-facing; noticeable impact on service quality\n"
+                "• 9–10: Primary channel or critical to customer experience"
             )
             def _show_cs_guide(_e=None):
                 try:
@@ -5282,11 +5306,13 @@ class AppTracker(tk.Tk):
             # Dynamic guide: show guidance text for each field on focus/click
             if 'Score' in factor_entries:
                 SCORE_GUIDE_TEXT = (
-                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                    "1. Score (overall performance/reliability)\n"
-                    "    • Businesses still value baseline performance and reputation, but it’s often overshadowed by security/DR.\n"
-                    "    • Typical score today: 6–8 for production systems, 3–5 for side tools.\n"
-                    "    • Base this on your business needs. How is the over all operation or performance of this system?"
+                    "Guiding Question\n"
+                    "• How would you rate the overall performance and reliability of this system today?\n\n"
+                    "Scoring Help\n"
+                    "• 1–3: Poor/unstable performance or frequent issues\n"
+                    "• 4–6: Adequate for current needs but with notable limitations\n"
+                    "• 7–8: Strong performance/reliability with minor gaps\n"
+                    "• 9–10: Excellent/mission-grade performance and reliability"
                 )
                 def _show_score_guide(_e=None):
                     try:
@@ -5299,10 +5325,13 @@ class AppTracker(tk.Tk):
 
             if 'Need' in factor_entries:
                 NEED_GUIDE_TEXT = (
-                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                    "2. Need (is this required or optional?)\n"
-                    "    • Since most organizations are digital-first now, “need” is often rated higher across the board.\n"
-                    "    • Typical score today: 7–10 for core systems, 3–6 for support systems."
+                    "Guiding Question\n"
+                    "• Is this system required to operate the business, or is it optional/nice-to-have?\n\n"
+                    "Scoring Help\n"
+                    "• 1–3: Optional; workarounds readily available\n"
+                    "• 4–6: Helpful but not strictly required; alternatives exist\n"
+                    "• 7–8: Required for multiple teams or core workflows\n"
+                    "• 9–10: Absolutely required to operate or meet obligations"
                 )
                 def _show_need_guide(_e=None):
                     try:
@@ -5315,10 +5344,13 @@ class AppTracker(tk.Tk):
 
             if 'Criticality' in factor_entries:
                 CRIT_GUIDE_TEXT = (
-                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                    "3. Criticality (impact if it fails)\n"
-                    "    • Businesses rank this very high; DR and BCP plans are built around it.\n"
-                    "    • Typical score today: 8–10 for finance, healthcare, or aviation systems; 5–7 for back-office."
+                    "Guiding Question\n"
+                    "• What is the business impact if this system is unavailable or fails?\n\n"
+                    "Scoring Help\n"
+                    "• 1–3: Minor inconvenience; small/localized impact\n"
+                    "• 4–6: Moderate productivity loss; delays but manageable\n"
+                    "• 7–8: Major disruption to critical processes\n"
+                    "• 9–10: Immediate stoppage/safety/regulatory impact"
                 )
                 def _show_crit_guide(_e=None):
                     try:
@@ -5331,11 +5363,13 @@ class AppTracker(tk.Tk):
 
             if 'Installed' in factor_entries:
                 INST_GUIDE_TEXT = (
-                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                    "4. Installed (how entrenched/mature it is)\n"
-                    "    • Legacy/entrenched systems = high score (because risk of change is big).\n"
-                    "    • New SaaS with light adoption = lower.\n"
-                    "    • Typical score today: 5–9, depending on age and footprint."
+                    "Guiding Question\n"
+                    "• How entrenched and widely adopted is this system across the organization?\n\n"
+                    "Scoring Help\n"
+                    "• 1–3: Pilot/limited use; easy to replace\n"
+                    "• 4–6: Moderate adoption; switching cost exists but manageable\n"
+                    "• 7–8: Widely adopted; high dependency across teams\n"
+                    "• 9–10: Deeply entrenched; very high switching cost/risk"
                 )
                 def _show_inst_guide(_e=None):
                     try:
@@ -5348,10 +5382,13 @@ class AppTracker(tk.Tk):
 
             if 'DisasterRecovery' in factor_entries:
                 DR_GUIDE_TEXT = (
-                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                    "5. Disaster Recovery\n"
-                    "    • A top board-level priority (especially after ransomware, cloud outages).\n"
-                    "    • Typical score today: 8–10 for regulated industries, 6–8 for SMBs."
+                    "Guiding Question\n"
+                    "• How quickly must this system be recovered after an outage, and how much data loss is tolerable?\n\n"
+                    "Scoring Help\n"
+                    "• 1–3: Long RTO/RPO acceptable; daily backups sufficient\n"
+                    "• 4–6: Recovery within hours required; some data loss acceptable\n"
+                    "• 7–8: Near real-time recovery/replication expected\n"
+                    "• 9–10: Continuous availability; near-zero downtime/data loss"
                 )
                 def _show_dr_guide(_e=None):
                     try:
@@ -5364,12 +5401,14 @@ class AppTracker(tk.Tk):
 
             if 'Safety' in factor_entries:
                 SAFETY_GUIDE_TEXT = (
-                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                    "6. Safety\n"
-                    "    • Huge in sectors like aviation, healthcare, manufacturing; less so in retail or marketing.\n"
-                    "    • Typical score today:\n"
-                    "        ○ Safety-critical = 9–10\n"
-                    "        ○ Non-safety systems = 2–4"
+                    "Guiding Question\n"
+                    "• Could failure of this system impact human safety or regulatory health/safety obligations?\n\n"
+                    "Scoring Help\n"
+                    "• 1–2: No relation to safety\n"
+                    "• 3–4: Indirect/low safety relevance\n"
+                    "• 5–6: Some safety implication depending on context\n"
+                    "• 7–8: High safety implications in certain scenarios\n"
+                    "• 9–10: Life/safety critical"
                 )
                 def _show_safety_guide(_e=None):
                     try:
@@ -5382,10 +5421,13 @@ class AppTracker(tk.Tk):
 
             if 'Security' in factor_entries:
                 SECURITY_GUIDE_TEXT = (
-                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                    "7. Security\n"
-                    "    • Always ranked near the top (breaches = financial + reputation disaster).\n"
-                    "    • Typical score today: 9–10 for external/integrated systems, 6–8 for internal."
+                    "Guiding Question\n"
+                    "• What is the security exposure if this system is compromised or misused?\n\n"
+                    "Scoring Help\n"
+                    "• 1–3: Isolated/low-sensitivity data; limited access\n"
+                    "• 4–6: Internal data with moderate sensitivity\n"
+                    "• 7–8: Handles sensitive/regulated data or external integrations\n"
+                    "• 9–10: High-risk target; critical/regulated data and broad access"
                 )
                 def _show_security_guide(_e=None):
                     try:
@@ -5398,10 +5440,13 @@ class AppTracker(tk.Tk):
 
             if 'Monetary' in factor_entries:
                 MONETARY_GUIDE_TEXT = (
-                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                    "8. Monetary (financial impact)\n"
-                    "    • With economic uncertainty, financial ties are weighted heavily.\n"
-                    "    • Typical score today: 8–10 if directly tied to revenue, 4–6 if indirect."
+                    "Guiding Question\n"
+                    "• What is the direct financial impact of downtime, failure, or poor performance?\n\n"
+                    "Scoring Help\n"
+                    "• 1–3: Minimal/indirect cost impact\n"
+                    "• 4–6: Moderate costs or revenue impact\n"
+                    "• 7–8: High revenue impact or material cost exposure\n"
+                    "• 9–10: Immediate material revenue loss/penalties"
                 )
                 def _show_monetary_guide(_e=None):
                     try:
@@ -5414,10 +5459,13 @@ class AppTracker(tk.Tk):
 
             if 'CustomerService' in factor_entries:
                 CS_GUIDE_TEXT = (
-                    "Business Factor Ratings (Typical 2025 Priorities)\n\n"
-                    "9. Customer Service\n"
-                    "    • Experience is often a differentiator in competitive industries.\n"
-                    "    • Typical score today: 7–10 for portals, apps, call centers; 3–5 for purely internal."
+                    "Guiding Question\n"
+                    "• How directly does this system affect the customer experience or service quality?\n\n"
+                    "Scoring Help\n"
+                    "• 1–3: Internal-only; no direct customer effect\n"
+                    "• 4–6: Indirect impact on customer interactions\n"
+                    "• 7–8: Customer-facing; noticeable impact on service quality\n"
+                    "• 9–10: Primary channel or critical to customer experience"
                 )
                 def _show_cs_guide(_e=None):
                     try:
