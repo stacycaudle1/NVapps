@@ -3673,43 +3673,21 @@ class AppTracker(tk.Tk):
             messagebox.showinfo('Deleted', 'Application deleted.')
 
     def _calculate_integration_risk(self, factors: dict) -> float:
-        """Calculate the weighted risk percentage (0–100) for an integration.
+        """Calculate risk using the original formula: Risk = (10 − Score) × Criticality.
 
-        Accepts a dict with any of these keys per factor (case-insensitive):
-        - score | Score | integration_score
-        - need | Need | integration_need
-        - criticality | Criticality | integration_criticality
-        - installed | Installed | integration_installed
-        - disaster_recovery | DisasterRecovery | disasterrecovery | integration_dr | dr
-        - safety | Safety | integration_safety
-        - security | Security | integration_security
-        - monetary | Monetary | integration_monetary
-        - customer_service | CustomerService | customerservice | integration_customerservice
+        Notes:
+        - This restores the pre-weighting computation the app used before.
+        - Returns a value in the 0–90 range when inputs are 0–10.
+        - Keeps alias support for 'score' and 'criticality'.
+
+        The previous weighting system is retained below as commented code for future use.
         """
-        weights = {
-            'score': 10.0,
-            'need': 0.01,
-            'criticality': 0.1,
-            'installed': 0.01,
-            'disaster_recovery': 0.05,
-            'safety': 0.01,
-            'security': 0.01,
-            'monetary': 0.01,
-            'customer_service': 0.01,
-        }
         aliases = {
             'score': ['score', 'Score', 'integration_score'],
-            'need': ['need', 'Need', 'integration_need'],
             'criticality': ['criticality', 'Criticality', 'integration_criticality'],
-            'installed': ['installed', 'Installed', 'integration_installed'],
-            'disaster_recovery': ['disaster_recovery', 'DisasterRecovery', 'disasterrecovery', 'integration_dr', 'dr'],
-            'safety': ['safety', 'Safety', 'integration_safety'],
-            'security': ['security', 'Security', 'integration_security'],
-            'monetary': ['monetary', 'Monetary', 'integration_monetary'],
-            'customer_service': ['customer_service', 'CustomerService', 'customerservice', 'integration_customerservice'],
         }
 
-        def _get_int(val):
+        def _get_int(val) -> int:
             try:
                 return int(val)
             except Exception:
@@ -3725,18 +3703,50 @@ class AppTracker(tk.Tk):
                     return _get_int(factors.get(nm))
             return 0
 
-        # Exclude factors with value 0 from the calculation (treat 0 as N/A)
-        weighted_total = 0.0
-        max_total = 0.0
-        for k, w in weights.items():
-            v = _get_factor(k)
-            if v > 0:
-                if k == 'score':
-                    weighted_total += (10 - v) * w  # Invert score: lower score = higher risk
-                else:
-                    weighted_total += v * w
-                max_total += 10 * w
-        return 0.0 if max_total == 0 else (weighted_total / max_total) * 100.0
+        score = _get_factor('score')
+        criticality = _get_factor('criticality')
+        return float((10 - score) * criticality)
+
+        # --- Weighted scoring system (disabled; retained for reference) ---
+        # weights = {
+        #     'score': 10.0,
+        #     'need': 0.01,
+        #     'criticality': 0.1,
+        #     'installed': 0.01,
+        #     'disaster_recovery': 0.05,
+        #     'safety': 0.01,
+        #     'security': 0.01,
+        #     'monetary': 0.01,
+        #     'customer_service': 0.01,
+        # }
+        # aliases_full = {
+        #     'score': ['score', 'Score', 'integration_score'],
+        #     'need': ['need', 'Need', 'integration_need'],
+        #     'criticality': ['criticality', 'Criticality', 'integration_criticality'],
+        #     'installed': ['installed', 'Installed', 'integration_installed'],
+        #     'disaster_recovery': ['disaster_recovery', 'DisasterRecovery', 'disasterrecovery', 'integration_dr', 'dr'],
+        #     'safety': ['safety', 'Safety', 'integration_safety'],
+        #     'security': ['security', 'Security', 'integration_security'],
+        #     'monetary': ['monetary', 'Monetary', 'integration_monetary'],
+        #     'customer_service': ['customer_service', 'CustomerService', 'customerservice', 'integration_customerservice'],
+        # }
+        # def _get_factor_full(key: str) -> int:
+        #     names = aliases_full.get(key, [key])
+        #     for nm in names:
+        #         if nm in factors and factors.get(nm) is not None:
+        #             return _get_int(factors.get(nm))
+        #     return 0
+        # weighted_total = 0.0
+        # max_total = 0.0
+        # for k, w in weights.items():
+        #     v = _get_factor_full(k)
+        #     if v > 0:
+        #         if k == 'score':
+        #             weighted_total += (10 - v) * w
+        #         else:
+        #             weighted_total += v * w
+        #         max_total += 10 * w
+        # return 0.0 if max_total == 0 else (weighted_total / max_total) * 100.0
 
     def add_system_integration(self):
         """Open dialog to add a new system integration to the selected parent system."""
