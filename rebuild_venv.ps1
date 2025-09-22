@@ -10,7 +10,7 @@ function Stop-PythonProcesses {
     Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
-function Try-RenameVenv {
+function Rename-Venv {
     param($Path)
     if (Test-Path $Path) {
         try {
@@ -40,7 +40,7 @@ function Stop-PythonProcesses {
     Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
-function Try-RenameVenv {
+function RenameVenv {
     param($Path)
     if (Test-Path $Path) {
         try {
@@ -58,7 +58,7 @@ function Try-RenameVenv {
     }
 }
 
-function Force-RemoveVenv {
+function Remove-Venv {
     param($Path)
     if (-not (Test-Path $Path)) { return }
     Write-Host 'Removing existing venv via robocopy mirror trick...' -ForegroundColor Yellow
@@ -69,7 +69,7 @@ function Force-RemoveVenv {
     try { Remove-Item $Path -Recurse -Force -ErrorAction Stop } catch { Write-Host "Residual removal warning: $_" -ForegroundColor DarkYellow }
 }
 
-function Create-Venv {
+function New-Venv {
     param($Interpreter)
     Write-Host "Creating new venv with: $Interpreter" -ForegroundColor Cyan
     # Support interpreters with arguments like 'py -3.12'
@@ -87,7 +87,7 @@ function Create-Venv {
     if (-not (Test-Path '.venv\Scripts\Activate.ps1')) { throw 'Venv creation failed (no Scripts/Activate.ps1)' }
 }
 
-function Activate-Venv {
+function Enter-Venv {
     Write-Host 'Activating virtual environment...'
     # Dot-source the activation script so it modifies the current session environment
     . .\.venv\Scripts\Activate.ps1
@@ -103,7 +103,7 @@ function Install-Dependencies {
     }
 }
 
-function Verify-Environment {
+function Test-Environment {
     Write-Host 'Verifying key imports...' -ForegroundColor Cyan
     $pyCode = @'
 import sys, importlib
