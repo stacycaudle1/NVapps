@@ -5,6 +5,35 @@ Usage: Right-click -> Run with PowerShell (or run from an elevated terminal if n
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 Write-Host '=== NVapps Virtual Environment Rebuild ===' -ForegroundColor Cyan
+function Stop-PythonProcesses {
+    Write-Host 'Stopping running python processes (if any)...'
+    Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
+function Try-RenameVenv {
+    param($Path)
+    if (Test-Path $Path) {
+        try {
+            # Build a safe new name from the leaf component and keep directory semantics correct
+            $leaf = Split-Path -Leaf $Path
+            $newName = "${leaf}_old"
+            Rename-Item -Path $Path -NewName $newName -ErrorAction Stop
+            Write-Host "Renamed $Path to $newName" -ForegroundColor Yellow
+            return ($Path + '_old')
+        } catch {
+            Write-Host 'Rename failed; will attempt robocopy mirror removal.' -ForegroundColor DarkYellow
+            Write-Host "Rename error: $_" -ForegroundColor DarkYellow
+            return $null
+        }
+    }
+}
+<#
+Rebuild Python virtual environment for NVapps.
+Usage: Right-click -> Run with PowerShell (or run from an elevated terminal if needed).
+#>
+Set-StrictMode -Version Latest
+$ErrorActionPreference = 'Continue'
+Write-Host '=== NVapps Virtual Environment Rebuild ===' -ForegroundColor Cyan
 
 function Stop-PythonProcesses {
     Write-Host 'Stopping running python processes (if any)...'
@@ -15,11 +44,15 @@ function Try-RenameVenv {
     param($Path)
     if (Test-Path $Path) {
         try {
-            Rename-Item -Path $Path -NewName ($Path + '_old') -ErrorAction Stop
-            Write-Host "Renamed $Path to ${Path}_old" -ForegroundColor Yellow
-            return "$Path`_old"
+            # Build a safe new name from the leaf component and keep directory semantics correct
+            $leaf = Split-Path -Leaf $Path
+            $newName = "${leaf}_old"
+            Rename-Item -Path $Path -NewName $newName -ErrorAction Stop
+            Write-Host "Renamed $Path to $newName" -ForegroundColor Yellow
+            return ($Path + '_old')
         } catch {
             Write-Host 'Rename failed; will attempt robocopy mirror removal.' -ForegroundColor DarkYellow
+            Write-Host "Rename error: $_" -ForegroundColor DarkYellow
             return $null
         }
     }
@@ -56,7 +89,8 @@ function Create-Venv {
 
 function Activate-Venv {
     Write-Host 'Activating virtual environment...'
-    & ".\.venv\Scripts\Activate.ps1"
+    # Dot-source the activation script so it modifies the current session environment
+    . .\.venv\Scripts\Activate.ps1
 }
 
 function Install-Dependencies {

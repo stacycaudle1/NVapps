@@ -13,11 +13,14 @@ __all__ = [
     'add_system_integration',
     'get_system_integration',
     'get_system_integrations',
+    'count_integrations_for_app',
+    'delete_integrations_for_app',
     'update_system_integration',
     'delete_system_integration',
     'calculate_business_risk',
     'dr_priority_band',
     'link_app_to_departments',
+    'set_app_departments',
     'get_app_departments',
     'get_application',
     'update_application',
@@ -50,6 +53,34 @@ def get_system_integrations(parent_app_id=None):
                         LEFT JOIN applications a ON i.parent_app_id = a.id
                         ORDER BY i.name''')
         return c.fetchall()
+    finally:
+        conn.close()
+
+def count_integrations_for_app(parent_app_id: int) -> int:
+    """Return count of system_integrations for a given parent app id."""
+    if parent_app_id is None:
+        return 0
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        c.execute('SELECT COUNT(*) FROM system_integrations WHERE parent_app_id = ?', (parent_app_id,))
+        row = c.fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+    finally:
+        conn.close()
+
+def delete_integrations_for_app(parent_app_id: int) -> int:
+    """Delete all system_integrations (and their category mappings via ON DELETE CASCADE) for a parent app.
+    Returns number of rows deleted."""
+    if parent_app_id is None:
+        return 0
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        c.execute('DELETE FROM system_integrations WHERE parent_app_id = ?', (parent_app_id,))
+        deleted = c.rowcount if hasattr(c, 'rowcount') else 0
+        conn.commit()
+        return deleted
     finally:
         conn.close()
 
@@ -486,6 +517,26 @@ def link_app_to_departments(app_id, dept_ids):
     conn.commit()
     conn.close()
 
+def set_app_departments(app_id, dept_ids):
+    """Replace an application's Business Unit links with the provided set.
+
+    This clears existing rows in application_business_units for the app and
+    inserts the given unit IDs. Ignores duplicates and handles empty lists.
+    """
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        # Clear existing links
+        c.execute('DELETE FROM application_business_units WHERE app_id = ?', (app_id,))
+        # Insert new links
+        if dept_ids:
+            for dept_id in dept_ids:
+                if dept_id is not None:
+                    c.execute('INSERT OR IGNORE INTO application_business_units (app_id, unit_id) VALUES (?, ?)', (app_id, dept_id))
+        conn.commit()
+    finally:
+        conn.close()
+
 def get_app_departments(app_id):
     """Get business unit names for an application"""
     conn = connect_db()
@@ -808,6 +859,36 @@ def get_division_application(division_name):
     finally:
         conn.close()
     return None, False
+
+def get_app_matching_div_dept_cat(division_name, unit_id, category_id):
+    """Return an existing application id if an application with the same
+    division is already linked to the given business unit (unit_id) and
+    category (category_id). Returns app_id or None.
+    """
+    if not division_name or unit_id is None or category_id is None:
+        return None
+
+    conn = connect_db()
+    c = conn.cursor()
+    try:
+        # Look up applications with the same division (case-insensitive)
+        # and that have links to both the given business unit and category.
+        c.execute('''
+            SELECT a.id
+            FROM applications a
+            INNER JOIN application_business_units bu ON bu.app_id = a.id
+            INNER JOIN application_categories ac ON ac.app_id = a.id
+            WHERE LOWER(TRIM(a.division)) = LOWER(TRIM(?))
+              AND bu.unit_id = ?
+              AND ac.category_id = ?
+            LIMIT 1
+        ''', (division_name, unit_id, category_id))
+        row = c.fetchone()
+        if row:
+            return row[0]
+    finally:
+        conn.close()
+    return None
 
 # ---------------- New helper & constraint functions -----------------
 def ensure_business_unit(name: str):

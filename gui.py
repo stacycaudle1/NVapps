@@ -71,6 +71,18 @@ class AppTracker(tk.Tk):
         except Exception:
             pass
 
+        # Temporary holder for user-added division names (not yet persisted)
+        try:
+            self.temp_divisions = set()
+        except Exception:
+            pass
+
+        # Track whether submit button is currently running a fade/animation
+        try:
+            self._submit_fading = False
+        except Exception:
+            pass
+
         # Initial data population (best-effort; UI may not have these yet depending on layout)
         try:
             if VERBOSE_LOG:
@@ -422,7 +434,13 @@ class AppTracker(tk.Tk):
         ttk.Button(popup, text='Add', command=add_dept, style='Primary.TButton').pack(padx=10, pady=10)
 
     def add_division_popup(self):
-        """Popup to add a new Division (stored in applications.division when new apps are created)."""
+        """Popup to add a new Division name to the picker without creating DB rows.
+
+        Notes:
+        - We no longer insert a placeholder application just to register a division.
+        - The division will be persisted only when the user submits via `submit_selection`.
+        - New division names are kept in-memory (self.temp_divisions) and merged into the listbox.
+        """
         popup = tk.Toplevel(self)
         popup.title('Add Division')
         ttk.Label(popup, text='Division:').pack(padx=10, pady=5)
@@ -433,45 +451,21 @@ class AppTracker(tk.Tk):
             div_name = div_entry.get().strip()
             if not div_name:
                 return
-            # We just insert a placeholder application to register division? Avoid that; instead we
-            # keep a lightweight memory list by inserting into a helper table or simply rely on
-            # existing apps. For simplicity, create an inert row only if division not present via an app.
-            db_success = False
+            # Initialize temporary divisions set if needed
+            if not hasattr(self, 'temp_divisions') or self.temp_divisions is None:
+                self.temp_divisions = set()
+            # Track this new division in-memory until submit
+            self.temp_divisions.add(div_name)
+            # Refresh listbox from DB + temp so it shows up immediately and select it
+            self.refresh_division_listbox()
             try:
-                # If a division already exists as an application, just touch its last_modified
-                conn = database.connect_db()
-                c = conn.cursor()
-                c.execute('SELECT id FROM applications WHERE TRIM(division) = ? LIMIT 1', (div_name,))
-                row = c.fetchone()
-                conn.close()
-                if row and row[0]:
-                    try:
-                        database.touch_application(int(row[0]))
-                        db_success = True
-                    except Exception:
-                        db_success = False
-                else:
-                    # Create a new application row for this division
-                    database.add_application(div_name, '', {}, [], notes='')
-                    db_success = True
-            except Exception as e:
-                # Common case may be 'database is locked' or other DB errors; inform the user and fall back to local update
-                try:
-                    messagebox.showwarning('Database Busy', f'Could not add division to database right now: {e}. The division will be shown temporarily until DB becomes available.')
-                except Exception:
-                    pass
-            # Refresh division list — if DB write failed, still insert the division locally so it appears immediately
-            try:
-                if db_success:
-                    self.refresh_division_listbox()
-                else:
-                    # Insert locally at end if not present
-                    try:
-                        existing = [self.division_listbox.get(i) for i in range(self.division_listbox.size())]
-                        if div_name not in existing:
-                            self.division_listbox.insert(tk.END, div_name)
-                    except Exception:
-                        pass
+                # auto-select the newly added division name
+                for i in range(self.division_listbox.size()):
+                    if self.division_listbox.get(i) == div_name:
+                        self.division_listbox.selection_clear(0, tk.END)
+                        self.division_listbox.selection_set(i)
+                        self.division_listbox.see(i)
+                        break
             except Exception:
                 pass
             popup.destroy()
@@ -2303,7 +2297,7 @@ class AppTracker(tk.Tk):
         dept_frame.grid(row=2, column=1, sticky='nsew', padx=padx, pady=pady)
         dept_frame.grid_propagate(False)
         dept_frame.configure(width=250, height=120)
-        self.department_listbox = tk.Listbox(dept_frame, selectmode='multiple', exportselection=0,
+        self.department_listbox = tk.Listbox(dept_frame, selectmode='single', exportselection=0,
                                              height=6, width=30, bg='white', font=('Segoe UI', 10),
                                              highlightthickness=1, highlightcolor=ACCENT, borderwidth=1)
         self.department_listbox.pack(side='left', fill='both', expand=True)
@@ -2369,8 +2363,8 @@ class AppTracker(tk.Tk):
         cat_frame.grid(row=9, column=1, sticky='nsew', padx=padx, pady=(0, pady))
         cat_frame.grid_propagate(False)
         cat_frame.configure(width=250, height=120)
-        # Allow multiple categories to be linked
-        self.category_listbox = tk.Listbox(cat_frame, selectmode='multiple', exportselection=0,
+        # Single category selection only
+        self.category_listbox = tk.Listbox(cat_frame, selectmode='single', exportselection=0,
                                            height=6, width=30, bg='white', font=('Segoe UI', 10),
                                            highlightthickness=1, highlightcolor=ACCENT, borderwidth=1)
         self.category_listbox.pack(side='left', fill='both', expand=True)
@@ -2443,7 +2437,12 @@ class AppTracker(tk.Tk):
         # Edit Selected and Save Changes buttons at the top with Primary style
         ttk.Button(top_buttons_frame, text='Edit Selected', command=self.load_selected_for_edit, style='Primary.TButton').pack(side='left', padx=6)
         # Save Changes and Show Report buttons (Save Changes first)
-        ttk.Button(top_buttons_frame, text='Save Changes', command=self.save_edit, style='Primary.TButton').pack(side='left', padx=6)
+        self.save_button = ttk.Button(top_buttons_frame, text='Save Changes', command=self.save_edit, style='Primary.TButton')
+        self.save_button.pack(side='left', padx=6)
+        try:
+            self.save_button.state(['disabled'])
+        except Exception:
+            pass
         try:
             top_show = ttk.Button(top_buttons_frame, text='Show Reports', command=self.show_report, style='Primary.TButton')
             top_show.pack(side='left', padx=6)
@@ -2711,6 +2710,12 @@ class AppTracker(tk.Tk):
             return
         item = sel[0]
         try:
+            # Enable Save button while editing
+            try:
+                if hasattr(self, 'save_button') and self.save_button is not None:
+                    self.save_button.state(['!disabled'])
+            except Exception:
+                pass
             # Clear all current selections
             self.department_listbox.selection_clear(0, tk.END)
 
@@ -2768,6 +2773,25 @@ class AppTracker(tk.Tk):
         except Exception:
             messagebox.showerror('Save', 'Could not determine application id for selected row.')
             return
+        # Load original values to detect changes
+        try:
+            orig_row = database.get_application(app_id)
+        except Exception:
+            orig_row = None
+        orig_division = None
+        if orig_row is not None:
+            try:
+                orig_division = orig_row['name'] if hasattr(orig_row, 'keys') and 'name' in orig_row.keys() else orig_row[1]
+            except Exception:
+                pass
+        try:
+            orig_bu_names = set(database.get_app_departments(app_id))
+        except Exception:
+            orig_bu_names = set()
+        try:
+            orig_cat_names = set(database.get_app_categories(app_id))
+        except Exception:
+            orig_cat_names = set()
         # Determine selected division
         name = ''
         try:
@@ -2776,6 +2800,18 @@ class AppTracker(tk.Tk):
                 name = self.division_listbox.get(sel_idx[0]).strip()
         except Exception:
             pass
+        # Update Business Unit links from selection
+        try:
+            departments = self.get_departments()
+            selected_indices = self.department_listbox.curselection()
+            dept_ids = [departments[i][0] for i in selected_indices]
+            if app_id is not None:
+                database.set_app_departments(app_id, dept_ids)
+        except Exception as e:
+            try:
+                messagebox.showwarning('Warning', f'Could not update Business Units: {e}')
+            except Exception:
+                pass
         # vendor = self.vendor_entry.get().strip()
         fields = {}
         # try:
@@ -2801,7 +2837,89 @@ class AppTracker(tk.Tk):
             database.set_app_categories(app_id, ids)
         except Exception:
             pass
+
+        # Detect if BU/Division/Category changed compared to originals
+        try:
+            new_division = name.strip() if isinstance(name, str) else name
+        except Exception:
+            new_division = name
+        try:
+            new_bu_names = set()
+            try:
+                for i in self.department_listbox.curselection():
+                    new_bu_names.add(self.department_listbox.get(i))
+            except Exception:
+                pass
+        except Exception:
+            new_bu_names = set()
+        try:
+            new_cat_names = set()
+            try:
+                sel = self.category_listbox.curselection()
+                if sel:
+                    cats = self.get_categories()
+                    for i in sel:
+                        if i < len(cats):
+                            new_cat_names.add(cats[i][1])
+            except Exception:
+                pass
+        except Exception:
+            new_cat_names = set()
+
+        changes_detected = False
+        try:
+            if (orig_division or '') != (new_division or ''):
+                changes_detected = True
+            if orig_bu_names != new_bu_names:
+                changes_detected = True
+            if orig_cat_names != new_cat_names:
+                changes_detected = True
+        except Exception:
+            pass
+
+        # If changes and there are integrations under this app, prompt to delete or keep
+        if changes_detected:
+            try:
+                int_count = database.count_integrations_for_app(app_id)
+            except Exception:
+                int_count = 0
+            if int_count > 0:
+                try:
+                    prompt = (
+                        f"This application has {int_count} System/Integration item(s).\n\n"
+                        "Do you want to delete these integrations due to the Business Unit / Division / Category changes?\n\n"
+                        "Yes = Delete integrations\nNo = Keep integrations"
+                    )
+                    delete_ints = messagebox.askyesno('Integrations Found', prompt)
+                except Exception:
+                    delete_ints = False
+                if delete_ints:
+                    try:
+                        deleted = database.delete_integrations_for_app(app_id)
+                        if VERBOSE_LOG:
+                            print(f"DEBUG: Deleted {deleted} integrations for app {app_id}")
+                    except Exception as e:
+                        try:
+                            messagebox.showwarning('Warning', f'Failed to delete integrations: {e}')
+                        except Exception:
+                            pass
+        # Refresh UI after saving
+        try:
+            self.refresh_division_listbox()
+        except Exception:
+            pass
         self.refresh_table()
+        try:
+            # Refresh integrations panel by reusing the tree selection handler
+            if hasattr(self, 'tree') and self.tree is not None:
+                try:
+                    # Reselect the same item to trigger on_tree_select
+                    self.tree.selection_set(item)
+                    self.on_tree_select(None)
+                except Exception:
+                    pass
+        except Exception:
+            pass
         
         # Clear form fields after saving
         # Clear division selection (no direct text entry now)
@@ -2815,6 +2933,12 @@ class AppTracker(tk.Tk):
         self.department_listbox.selection_clear(0, tk.END)
         
         messagebox.showinfo('Saved', 'Changes saved.')
+        # Disable Save button after save
+        try:
+            if hasattr(self, 'save_button') and self.save_button is not None:
+                self.save_button.state(['disabled'])
+        except Exception:
+            pass
 
     def add_application(self):
         # Placeholder: division now selected via listbox
@@ -2844,13 +2968,13 @@ class AppTracker(tk.Tk):
             except Exception:
                 factors[key] = 0
 
-        selected_indices = self.department_listbox.curselection()
-        if not selected_indices:
-            messagebox.showerror('Error', 'Please select at least one department.')
+        sel_idx = self.department_listbox.curselection()
+        if not sel_idx:
+            messagebox.showerror('Error', 'Please select a Business Unit.')
             return
-
         departments = self.get_departments()
-        dept_ids = [departments[i][0] for i in selected_indices]
+        # single select: use first selected
+        dept_ids = [departments[sel_idx[0]][0]]
         last_mod = datetime.utcnow().isoformat()
 
         # Use database helper to create application rows and links
@@ -2864,9 +2988,10 @@ class AppTracker(tk.Tk):
                     ids = []
                     if sel:
                         cats = self.get_categories()
-                        for idx in sel:
-                            if idx < len(cats):
-                                ids.append(cats[idx][0])
+                        # single select: first index only
+                        idx = sel[0]
+                        if idx < len(cats):
+                            ids.append(cats[idx][0])
                     database.set_app_categories(app_id, ids)
             except Exception:
                 pass
@@ -2893,13 +3018,13 @@ class AppTracker(tk.Tk):
 
     def submit_selection(self):
         """Create or update application from selected Business Unit(s), Division and Category(s)."""
-        # Get selected departments (business units)
+        # Get selected department (single select)
         dept_indices = self.department_listbox.curselection()
         if not dept_indices:
-            messagebox.showerror('Error', 'Please select at least one Business Unit.')
+            messagebox.showerror('Error', 'Please select a Business Unit.')
             return
         departments = self.get_departments()
-        dept_ids = [departments[i][0] for i in dept_indices]
+        dept_ids = [departments[dept_indices[0]][0]]
 
         # Get selected division (single select)
         try:
@@ -2912,187 +3037,296 @@ class AppTracker(tk.Tk):
             messagebox.showerror('Error', 'Please select a Division.')
             return
 
-        # Get selected categories (multiple)
+        # Get selected category (single)
         cat_sel = self.category_listbox.curselection()
         if not cat_sel:
-            messagebox.showerror('Error', 'Please select at least one Category.')
+            messagebox.showerror('Error', 'Please select a Category.')
             return
         cats = self.get_categories()
-        cat_ids = [cats[i][0] for i in cat_sel if i < len(cats)]
+        cat_ids = [cats[cat_sel[0]][0]]
 
         # Check if division already exists
         existing_id, has_links = database.get_division_application(division_name)
         action_desc = "Update" if existing_id and has_links else "Create"
-        
-        # Confirm with the user with appropriate message
-        message = f'{action_desc} application for Division "{division_name}" linked to {len(dept_ids)} Business Unit(s) and {len(cat_ids)} Category(s)?'
-        if existing_id and has_links:
-            message += "\n\nThis division already exists and has links. The operation will update its relationships."
-        
-        confirm = messagebox.askyesno('Confirm ' + action_desc, message)
-        if not confirm:
-            return
 
+        # Check for full duplicate: division + business unit + category
         try:
-            if existing_id:
-                # Update existing application's relationships
-                database.link_app_to_departments(existing_id, dept_ids)
-                database.set_app_categories(existing_id, cat_ids)
-                database.touch_application(existing_id)
-                app_id = existing_id
-            else:
-                # Create new application
-                app_id = database.add_application(division_name, '', {}, dept_ids, notes='')
-                if app_id:
-                    database.set_app_categories(app_id, cat_ids)
-                    database.touch_application(app_id)
-
-            if app_id:
-                try:
-                    if hasattr(self, 'submit_button') and self.submit_button is not None:
-                        self.submit_button.configure(style='Success.TButton')
-                        self.submit_button.state(['!disabled'])
-                except Exception:
-                    pass
-                messagebox.showinfo('Success', f'{action_desc}d application for Division "{division_name}"')
-            else:
-                messagebox.showerror('Error', 'Failed to process application entry.')
-        except Exception as e:
-            messagebox.showerror('Error', f'Failed to {action_desc.lower()} application: {e}')
-            return
-
-        # Clear selections and refresh
-        try:
-            self.department_listbox.selection_clear(0, tk.END)
+            dup_app = database.get_app_matching_div_dept_cat(division_name, dept_ids[0], cat_ids[0])
         except Exception:
-            pass
-        try:
-            self.division_listbox.selection_clear(0, tk.END)
-        except Exception:
-            pass
-        try:
-            self.category_listbox.selection_clear(0, tk.END)
-        except Exception:
-            pass
-        self.refresh_table()
+            dup_app = None
+        if dup_app:
+            # Animate the submit button from green (Success) to danger (red) to draw attention,
+            # then show the duplicate confirmation dialog. If the user cancels, revert style.
+            try:
+                if not (hasattr(self, 'submit_button') and self.submit_button is not None):
+                    # Fallback to synchronous warning if no button available
+                    warn_msg = (
+                        f"An entry already exists for Business Unit '{self.department_listbox.get(dept_indices[0])}' "
+                        f"/ Division '{division_name}' / Category '{cats[cat_sel[0]][1]}'.\n\n"
+                        "Proceeding may create or update a duplicate entry. Do you want to continue?"
+                    )
+                    proceed = messagebox.askyesno('Possible Duplicate', warn_msg)
+                    if not proceed:
+                        return
+                else:
+                    # Color interpolation from Success (#90EE90) to Danger (#f8d7da)
+                    start_hex = '#90EE90'
+                    end_hex = '#f8d7da'
+                    start_rgb = (int(start_hex[1:3], 16), int(start_hex[3:5], 16), int(start_hex[5:7], 16))
+                    end_rgb = (int(end_hex[1:3], 16), int(end_hex[3:5], 16), int(end_hex[5:7], 16))
 
-        # Highlight the newly created application's row(s) (one per category) after table refresh
-        try:
-            if app_id:
-                # Find all iids matching the new app id prefix
-                new_iids = [iid for iid in self.tree.get_children('') if str(iid).startswith(f"{app_id}:")]
-                if new_iids:
-                    # Define highlight tag
+                    steps = 18
+                    interval = 35  # ms -> ~630ms total
+
+                    def lerp(a, b, t):
+                        return int(a + (b - a) * t)
+
+                    dyn_style = 'DupFlashDynamic.TButton'
                     try:
-                        self.tree.tag_configure('newflash', background='#cfe8ff')  # light blue
-                    except Exception:
-                        pass
-                    for iid in new_iids:
-                        try:
-                            current_tags = self.tree.item(iid, 'tags') or ()
-                            if 'newflash' not in current_tags:
-                                self.tree.item(iid, tags=current_tags + ('newflash',))
-                        except Exception:
-                            pass
-                    # Select first new row
-                    try:
-                        self.tree.selection_set(new_iids[0])
-                        self.tree.see(new_iids[0])
+                        ttk.Style(self.submit_button).configure(dyn_style, background=start_hex, foreground='white', borderwidth=0)
                     except Exception:
                         pass
 
-                    # Fade out effect: gradually blend back to transparent by alternating shade then removing tag
-                    fade_steps = ['#cfe8ff', '#d9edff', '#e3f2ff', '#ecf6ff', '#f5faff']
-                    def fade_step(i=0):
+                    def step(i=0):
                         try:
-                            if i < len(fade_steps):
-                                shade = fade_steps[i]
-                                try:
-                                    self.tree.tag_configure('newflash', background=shade)
-                                except Exception:
-                                    pass
-                                self.after(120, lambda: fade_step(i+1))
+                            if not hasattr(self, 'submit_button') or self.submit_button is None:
+                                return
+                            t = i / float(steps)
+                            r = lerp(start_rgb[0], end_rgb[0], t)
+                            g = lerp(start_rgb[1], end_rgb[1], t)
+                            b = lerp(start_rgb[2], end_rgb[2], t)
+                            hex_color = f"#{r:02x}{g:02x}{b:02x}"
+                            try:
+                                style = ttk.Style(self.submit_button)
+                                style.configure(dyn_style, background=hex_color)
+                                self.submit_button.configure(style=dyn_style)
+                            except Exception:
+                                pass
+
+                            if i < steps:
+                                self.after(interval, lambda: step(i + 1))
                             else:
-                                # Remove highlight by clearing tag background and removing tag from rows
-                                try:
-                                    self.tree.tag_configure('newflash', background='')
-                                except Exception:
-                                    pass
-                                for iid in new_iids:
+                                # After animation completes, show confirmation dialog
+                                warn_msg = (
+                                    f"An entry already exists for Business Unit '{self.department_listbox.get(dept_indices[0])}' "
+                                    f"/ Division '{division_name}' / Category '{cats[cat_sel[0]][1]}'.\n\n"
+                                    "Proceeding may create or update a duplicate entry. Do you want to continue?"
+                                )
+                                proceed = messagebox.askyesno('Possible Duplicate', warn_msg)
+                                if not proceed:
+                                    # Revert style to Primary
                                     try:
-                                        tags_now = tuple(t for t in self.tree.item(iid, 'tags') if t != 'newflash')
-                                        self.tree.item(iid, tags=tags_now)
+                                        self.submit_button.configure(style='Primary.TButton')
                                     except Exception:
                                         pass
+                                    return
+                                # If proceed, continue to the existing flow (do nothing here and let code continue)
                         except Exception:
                             pass
-                    # Kick off fade after slight delay so initial color is visible
-                    self.after(150, fade_step)
-        except Exception:
-            pass
 
-        # Start fading the button from green to blue (ACCENT) over ~1s, then disable
-        try:
-            if hasattr(self, 'submit_button') and self.submit_button is not None:
-                self._submit_fading = True
+                    # Kick off animated fade, then the dialog will run in the final step
+                    self.after(20, lambda: step(0))
+                    # Wait for the animation+dialog to run before continuing; but since askyesno is modal
+                    # and called from the final step, the code below will still execute after user choice.
+                    # We intentionally do not immediately return here so that after the user confirms,
+                    # the normal create/update code runs below.
+            except Exception:
+                pass
+        
+        # Encapsulate the create/update flow as a nested function so duplicate animation
+        # can block and then call this when user confirms.
+        def do_submit_flow():
+            # Confirm with the user with appropriate message
+            message = f'{action_desc} application for Division "{division_name}" linked to {len(dept_ids)} Business Unit(s) and {len(cat_ids)} Category(s)?'
+            if existing_id and has_links:
+                message += "\n\nThis division already exists and has links. The operation will update its relationships."
 
-                # Define start (green) and end (blue) colors
-                start_rgb = (144, 238, 144)  # #90EE90
-                # Parse ACCENT hex (#0078d4 typical) if defined
-                try:
-                    end_hex = ACCENT if ACCENT.startswith('#') and len(ACCENT) == 7 else '#0078d4'
-                except Exception:
-                    end_hex = '#0078d4'
-                end_rgb = (int(end_hex[1:3], 16), int(end_hex[3:5], 16), int(end_hex[5:7], 16))
+            confirm = messagebox.askyesno('Confirm ' + action_desc, message)
+            if not confirm:
+                return
 
-                steps = 20
-                interval = 50  # ms (20 * 50 = 1000ms)
+            try:
+                if existing_id:
+                    # Update existing application's relationships
+                    database.link_app_to_departments(existing_id, dept_ids)
+                    database.set_app_categories(existing_id, cat_ids)
+                    database.touch_application(existing_id)
+                    app_id_local = existing_id
+                else:
+                    # Create new application
+                    app_id_local = database.add_application(division_name, '', {}, dept_ids, notes='')
+                    if app_id_local:
+                        database.set_app_categories(app_id_local, cat_ids)
+                        database.touch_application(app_id_local)
 
-                def lerp(a, b, t):
-                    return int(a + (b - a) * t)
-
-                # Use a single dynamic style for flash instead of direct background configure
-                dyn_style_name = 'SubmitFlashDynamic.TButton'
-                try:
-                    ttk.Style(self.submit_button).configure(dyn_style_name, background='#90EE90', foreground='white', borderwidth=0)
-                except Exception:
-                    pass
-
-                def step(i=0):
+                if app_id_local:
                     try:
-                        if not hasattr(self, 'submit_button') or self.submit_button is None:
-                            return
-                        t = i / float(steps)
-                        r = lerp(start_rgb[0], end_rgb[0], t)
-                        g = lerp(start_rgb[1], end_rgb[1], t)
-                        b = lerp(start_rgb[2], end_rgb[2], t)
-                        hex_color = f"#{r:02x}{g:02x}{b:02x}"
+                        if hasattr(self, 'submit_button') and self.submit_button is not None:
+                            self.submit_button.configure(style='Success.TButton')
+                            self.submit_button.state(['!disabled'])
+                    except Exception:
+                        pass
+                    messagebox.showinfo('Success', f'{action_desc}d application for Division "{division_name}"')
+                else:
+                    messagebox.showerror('Error', 'Failed to process application entry.')
+            except Exception as e:
+                messagebox.showerror('Error', f'Failed to {action_desc.lower()} application: {e}')
+                return
+
+            # Clear selections and refresh
+            try:
+                self.department_listbox.selection_clear(0, tk.END)
+            except Exception:
+                pass
+            try:
+                self.division_listbox.selection_clear(0, tk.END)
+            except Exception:
+                pass
+            try:
+                self.category_listbox.selection_clear(0, tk.END)
+            except Exception:
+                pass
+            # Remove from temporary divisions once persisted to avoid duplicates
+            try:
+                if app_id_local and hasattr(self, 'temp_divisions') and self.temp_divisions is not None:
+                    if division_name in self.temp_divisions:
+                        self.temp_divisions.discard(division_name)
+            except Exception:
+                pass
+            # Refresh division list to reflect persisted state
+            try:
+                self.refresh_division_listbox()
+            except Exception:
+                pass
+            self.refresh_table()
+
+            # Highlight the newly created application's row(s) (one per category) after table refresh
+            try:
+                if app_id_local:
+                    # Find all iids matching the new app id prefix
+                    new_iids = [iid for iid in self.tree.get_children('') if str(iid).startswith(f"{app_id_local}:")]
+                    if new_iids:
+                        # Define highlight tag
                         try:
-                            style = ttk.Style(self.submit_button)
-                            style.configure(dyn_style_name, background=hex_color)
-                            self.submit_button.configure(style=dyn_style_name)
+                            self.tree.tag_configure('newflash', background='#cfe8ff')  # light blue
                         except Exception:
                             pass
-                        if i < steps:
-                            self.after(interval, lambda: step(i + 1))
-                        else:
-                            # Finalize: apply primary style & disable
+                        for iid in new_iids:
                             try:
-                                self.submit_button.configure(style='Primary.TButton')
+                                current_tags = self.tree.item(iid, 'tags') or ()
+                                if 'newflash' not in current_tags:
+                                    self.tree.item(iid, tags=current_tags + ('newflash',))
                             except Exception:
                                 pass
+                        # Select first new row
+                        try:
+                            self.tree.selection_set(new_iids[0])
+                            self.tree.see(new_iids[0])
+                        except Exception:
+                            pass
+
+                        # Fade out effect: gradually blend back to transparent by alternating shade then removing tag
+                        fade_steps = ['#cfe8ff', '#d9edff', '#e3f2ff', '#ecf6ff', '#f5faff']
+                        def fade_step(i=0):
                             try:
-                                self.submit_button.state(['disabled'])
+                                if i < len(fade_steps):
+                                    shade = fade_steps[i]
+                                    try:
+                                        self.tree.tag_configure('newflash', background=shade)
+                                    except Exception:
+                                        pass
+                                    self.after(120, lambda: fade_step(i+1))
+                                else:
+                                    # Remove highlight by clearing tag background and removing tag from rows
+                                    try:
+                                        self.tree.tag_configure('newflash', background='')
+                                    except Exception:
+                                        pass
+                                    for iid in new_iids:
+                                        try:
+                                            tags_now = tuple(t for t in self.tree.item(iid, 'tags') if t != 'newflash')
+                                            self.tree.item(iid, tags=tags_now)
+                                        except Exception:
+                                            pass
                             except Exception:
                                 pass
-                            self._submit_fading = False
+                        # Kick off fade after slight delay so initial color is visible
+                        self.after(150, fade_step)
+            except Exception:
+                pass
+
+            # Start fading the button from green to blue (ACCENT) over ~1s, then disable
+            try:
+                if hasattr(self, 'submit_button') and self.submit_button is not None:
+                    self._submit_fading = True
+
+                    # Define start (green) and end (blue) colors
+                    start_rgb = (144, 238, 144)  # #90EE90
+                    # Parse ACCENT hex (#0078d4 typical) if defined
+                    try:
+                        end_hex = ACCENT if ACCENT.startswith('#') and len(ACCENT) == 7 else '#0078d4'
+                    except Exception:
+                        end_hex = '#0078d4'
+                    end_rgb = (int(end_hex[1:3], 16), int(end_hex[3:5], 16), int(end_hex[5:7], 16))
+
+                    steps = 20
+                    interval = 50  # ms (20 * 50 = 1000ms)
+
+                    def lerp(a, b, t):
+                        return int(a + (b - a) * t)
+
+                    # Use a single dynamic style for flash instead of direct background configure
+                    dyn_style_name = 'SubmitFlashDynamic.TButton'
+                    try:
+                        ttk.Style(self.submit_button).configure(dyn_style_name, background='#90EE90', foreground='white', borderwidth=0)
                     except Exception:
                         pass
 
-                # Kick off fade after UI idle so messagebox close doesn't block initial frame
-                self.after(50, step)
-        except Exception:
-            pass
+                    def step(i=0):
+                        try:
+                            if not hasattr(self, 'submit_button') or self.submit_button is None:
+                                return
+                            t = i / float(steps)
+                            r = lerp(start_rgb[0], end_rgb[0], t)
+                            g = lerp(start_rgb[1], end_rgb[1], t)
+                            b = lerp(start_rgb[2], end_rgb[2], t)
+                            hex_color = f"#{r:02x}{g:02x}{b:02x}"
+                            try:
+                                style = ttk.Style(self.submit_button)
+                                style.configure(dyn_style_name, background=hex_color)
+                                self.submit_button.configure(style=dyn_style_name)
+                            except Exception:
+                                pass
+                            if i < steps:
+                                self.after(interval, lambda: step(i + 1))
+                            else:
+                                # Finalize: apply primary style & disable
+                                try:
+                                    self.submit_button.configure(style='Primary.TButton')
+                                except Exception:
+                                    pass
+                                try:
+                                    self.submit_button.state(['disabled'])
+                                except Exception:
+                                    pass
+                                self._submit_fading = False
+                        except Exception:
+                            pass
+
+                    # Kick off fade after UI idle so messagebox close doesn't block initial frame
+                    self.after(50, step)
+            except Exception:
+                pass
+
+        # If a duplicate was detected, the animation will call do_submit_flow() after user confirms
+        if dup_app:
+            # We scheduled the animation which will, on completion, prompt the user and call do_submit_flow()
+            # The call to do_submit_flow will be triggered from inside the animation's final step when the
+            # user confirms; therefore return here to avoid running duplicate flows immediately.
+            return
+
+        # No duplicate: continue synchronously
+        do_submit_flow()
 
     def update_submit_button_state(self):
         """Enable the submit button only when a dept, division and category are selected."""
@@ -3201,6 +3435,11 @@ class AppTracker(tk.Tk):
 
             # Get business unit list for this app
             depts = database.get_app_departments(app_id)
+            # Skip inert divisions (no BUs and no categories)
+            try:
+                has_bu = bool(depts)
+            except Exception:
+                has_bu = False
             # We'll display the first Business Unit (or comma-join if multiple)
             dept_str = ', '.join(depts)
 
@@ -3231,6 +3470,9 @@ class AppTracker(tk.Tk):
                     ''', (app_id,))
                     app_categories_cache[app_id] = [r[0] for r in c.fetchall()]
                 category_list = app_categories_cache.get(app_id, [])
+                if not has_bu and not category_list:
+                    # No BUs and no categories linked: don't show this division in the table
+                    continue
                 # Get max last_modified from integrations for this app
                 c.execute('SELECT MAX(last_modified) FROM system_integrations WHERE parent_app_id = ?', (app_id,))
                 lm_row = c.fetchone()
@@ -3627,6 +3869,14 @@ class AppTracker(tk.Tk):
             conn.close()
         except Exception:
             divisions = []
+        # Merge any temporary divisions added by the user (not yet persisted)
+        try:
+            if hasattr(self, 'temp_divisions') and self.temp_divisions:
+                for d in sorted(self.temp_divisions):
+                    if d not in divisions:
+                        divisions.append(d)
+        except Exception:
+            pass
         # Preserve current selection text if possible
         current_selection = None
         try:
@@ -3636,7 +3886,7 @@ class AppTracker(tk.Tk):
         except Exception:
             pass
         self.division_listbox.delete(0, tk.END)
-        for d in divisions:
+        for d in sorted(divisions, key=lambda x: (x or '').lower()):
             self.division_listbox.insert(tk.END, d)
         if current_selection:
             try:
