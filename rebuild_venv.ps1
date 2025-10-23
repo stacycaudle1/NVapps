@@ -5,42 +5,13 @@ Usage: Right-click -> Run with PowerShell (or run from an elevated terminal if n
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Continue'
 Write-Host '=== NVapps Virtual Environment Rebuild ===' -ForegroundColor Cyan
+
 function Stop-PythonProcesses {
     Write-Host 'Stopping running python processes (if any)...'
     Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
 function Rename-Venv {
-    param($Path)
-    if (Test-Path $Path) {
-        try {
-            # Build a safe new name from the leaf component and keep directory semantics correct
-            $leaf = Split-Path -Leaf $Path
-            $newName = "${leaf}_old"
-            Rename-Item -Path $Path -NewName $newName -ErrorAction Stop
-            Write-Host "Renamed $Path to $newName" -ForegroundColor Yellow
-            return ($Path + '_old')
-        } catch {
-            Write-Host 'Rename failed; will attempt robocopy mirror removal.' -ForegroundColor DarkYellow
-            Write-Host "Rename error: $_" -ForegroundColor DarkYellow
-            return $null
-        }
-    }
-}
-<#
-Rebuild Python virtual environment for NVapps.
-Usage: Right-click -> Run with PowerShell (or run from an elevated terminal if needed).
-#>
-Set-StrictMode -Version Latest
-$ErrorActionPreference = 'Continue'
-Write-Host '=== NVapps Virtual Environment Rebuild ===' -ForegroundColor Cyan
-
-function Stop-PythonProcesses {
-    Write-Host 'Stopping running python processes (if any)...'
-    Get-Process python -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
-}
-
-function RenameVenv {
     param($Path)
     if (Test-Path $Path) {
         try {
@@ -117,13 +88,20 @@ for m in mods:
     except Exception as e:
         print("[FAIL]", m, "-", e)
 '@
-    & python -c $pyCode
+    $tmpFile = Join-Path $env:TEMP "nvapps_env_check_$([System.Guid]::NewGuid().ToString('N')).py"
+    Set-Content -LiteralPath $tmpFile -Value $pyCode -Encoding ASCII
+    try {
+        & python $tmpFile
+    } finally {
+        Remove-Item $tmpFile -ErrorAction SilentlyContinue
+    }
 }
 
 # Main flow
 Stop-PythonProcesses
-$renamed = Try-RenameVenv -Path '.venv'
-if (-not $renamed) { Force-RemoveVenv -Path '.venv' }
+$renamed = $null
+$renamed = Rename-Venv -Path '.venv'
+if (-not $renamed) { Remove-Venv -Path '.venv' }
 
 # Choose interpreter
 $python = 'python'
@@ -136,10 +114,10 @@ try {
 }
 
 try {
-    Create-Venv -Interpreter $python
-    Activate-Venv
+    New-Venv -Interpreter $python
+    Enter-Venv
     Install-Dependencies
-    Verify-Environment
+    Test-Environment
     Write-Host 'Rebuild complete.' -ForegroundColor Green
     if ($renamed) { Write-Host "You can now delete leftover $renamed when satisfied." -ForegroundColor Yellow }
 } catch {
