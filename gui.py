@@ -3045,119 +3045,24 @@ class AppTracker(tk.Tk):
         cats = self.get_categories()
         cat_ids = [cats[cat_sel[0]][0]]
 
-        # Check if division already exists
-        existing_id, has_links = database.get_division_application(division_name)
-        action_desc = "Update" if existing_id and has_links else "Create"
-
-        # Check for full duplicate: division + business unit + category
-        try:
-            dup_app = database.get_app_matching_div_dept_cat(division_name, dept_ids[0], cat_ids[0])
-        except Exception:
-            dup_app = None
-        if dup_app:
-            # Animate the submit button from green (Success) to danger (red) to draw attention,
-            # then show the duplicate confirmation dialog. If the user cancels, revert style.
-            try:
-                if not (hasattr(self, 'submit_button') and self.submit_button is not None):
-                    # Fallback to synchronous warning if no button available
-                    warn_msg = (
-                        f"An entry already exists for Business Unit '{self.department_listbox.get(dept_indices[0])}' "
-                        f"/ Division '{division_name}' / Category '{cats[cat_sel[0]][1]}'.\n\n"
-                        "Proceeding may create or update a duplicate entry. Do you want to continue?"
-                    )
-                    proceed = messagebox.askyesno('Possible Duplicate', warn_msg)
-                    if not proceed:
-                        return
-                else:
-                    # Color interpolation from Success (#90EE90) to Danger (#f8d7da)
-                    start_hex = '#90EE90'
-                    end_hex = '#f8d7da'
-                    start_rgb = (int(start_hex[1:3], 16), int(start_hex[3:5], 16), int(start_hex[5:7], 16))
-                    end_rgb = (int(end_hex[1:3], 16), int(end_hex[3:5], 16), int(end_hex[5:7], 16))
-
-                    steps = 18
-                    interval = 35  # ms -> ~630ms total
-
-                    def lerp(a, b, t):
-                        return int(a + (b - a) * t)
-
-                    dyn_style = 'DupFlashDynamic.TButton'
-                    try:
-                        ttk.Style(self.submit_button).configure(dyn_style, background=start_hex, foreground='white', borderwidth=0)
-                    except Exception:
-                        pass
-
-                    def step(i=0):
-                        try:
-                            if not hasattr(self, 'submit_button') or self.submit_button is None:
-                                return
-                            t = i / float(steps)
-                            r = lerp(start_rgb[0], end_rgb[0], t)
-                            g = lerp(start_rgb[1], end_rgb[1], t)
-                            b = lerp(start_rgb[2], end_rgb[2], t)
-                            hex_color = f"#{r:02x}{g:02x}{b:02x}"
-                            try:
-                                style = ttk.Style(self.submit_button)
-                                style.configure(dyn_style, background=hex_color)
-                                self.submit_button.configure(style=dyn_style)
-                            except Exception:
-                                pass
-
-                            if i < steps:
-                                self.after(interval, lambda: step(i + 1))
-                            else:
-                                # After animation completes, show confirmation dialog
-                                warn_msg = (
-                                    f"An entry already exists for Business Unit '{self.department_listbox.get(dept_indices[0])}' "
-                                    f"/ Division '{division_name}' / Category '{cats[cat_sel[0]][1]}'.\n\n"
-                                    "Proceeding may create or update a duplicate entry. Do you want to continue?"
-                                )
-                                proceed = messagebox.askyesno('Possible Duplicate', warn_msg)
-                                if not proceed:
-                                    # Revert style to Primary
-                                    try:
-                                        self.submit_button.configure(style='Primary.TButton')
-                                    except Exception:
-                                        pass
-                                    return
-                                # If proceed, continue to the existing flow (do nothing here and let code continue)
-                        except Exception:
-                            pass
-
-                    # Kick off animated fade, then the dialog will run in the final step
-                    self.after(20, lambda: step(0))
-                    # Wait for the animation+dialog to run before continuing; but since askyesno is modal
-                    # and called from the final step, the code below will still execute after user choice.
-                    # We intentionally do not immediately return here so that after the user confirms,
-                    # the normal create/update code runs below.
-            except Exception:
-                pass
-        
-        # Encapsulate the create/update flow as a nested function so duplicate animation
-        # can block and then call this when user confirms.
+        # Encapsulate the create flow so we can call it from different duplicate-handling paths
         def do_submit_flow():
-            # Confirm with the user with appropriate message
-            message = f'{action_desc} application for Division "{division_name}" linked to {len(dept_ids)} Business Unit(s) and {len(cat_ids)} Category(s)?'
-            if existing_id and has_links:
-                message += "\n\nThis division already exists and has links. The operation will update its relationships."
-
-            confirm = messagebox.askyesno('Confirm ' + action_desc, message)
+            # Confirm create of a new row (will not alter existing rows)
+            message = (
+                f'Create application for Division "{division_name}" '
+                f'linked to {len(dept_ids)} Business Unit(s) and {len(cat_ids)} Category(s)?\n\n'
+                'This will create a new entry and will not change existing ones.'
+            )
+            confirm = messagebox.askyesno('Confirm Create', message)
             if not confirm:
                 return
 
             try:
-                if existing_id:
-                    # Update existing application's relationships
-                    database.link_app_to_departments(existing_id, dept_ids)
-                    database.set_app_categories(existing_id, cat_ids)
-                    database.touch_application(existing_id)
-                    app_id_local = existing_id
-                else:
-                    # Create new application
-                    app_id_local = database.add_application(division_name, '', {}, dept_ids, notes='')
-                    if app_id_local:
-                        database.set_app_categories(app_id_local, cat_ids)
-                        database.touch_application(app_id_local)
+                # Always create a new application row for this selection
+                app_id_local = database.add_application(division_name, '', {}, dept_ids, notes='')
+                if app_id_local:
+                    database.set_app_categories(app_id_local, cat_ids)
+                    database.touch_application(app_id_local)
 
                 if app_id_local:
                     try:
@@ -3166,11 +3071,11 @@ class AppTracker(tk.Tk):
                             self.submit_button.state(['!disabled'])
                     except Exception:
                         pass
-                    messagebox.showinfo('Success', f'{action_desc}d application for Division "{division_name}"')
+                    messagebox.showinfo('Success', f'Created application for Division "{division_name}"')
                 else:
                     messagebox.showerror('Error', 'Failed to process application entry.')
             except Exception as e:
-                messagebox.showerror('Error', f'Failed to {action_desc.lower()} application: {e}')
+                messagebox.showerror('Error', f'Failed to create application: {e}')
                 return
 
             # Clear selections and refresh
@@ -3317,6 +3222,99 @@ class AppTracker(tk.Tk):
                     self.after(50, step)
             except Exception:
                 pass
+        # We're creating a new row per BU+Division+Category selection.
+        # Do not overwrite existing rows just because the division name exists elsewhere.
+        existing_id, has_links = (None, False)
+        action_desc = "Create"
+
+        # Check for full duplicate: division + business unit + category
+        try:
+            dup_app = database.get_app_matching_div_dept_cat(division_name, dept_ids[0], cat_ids[0])
+        except Exception:
+            dup_app = None
+        if dup_app:
+            # Animate the submit button from green (Success) to danger (red) to draw attention,
+            # then show the duplicate confirmation dialog. If the user cancels, revert style.
+            try:
+                if not (hasattr(self, 'submit_button') and self.submit_button is not None):
+                    # Fallback to synchronous warning if no button available
+                    warn_msg = (
+                        f"An entry already exists for Business Unit '{self.department_listbox.get(dept_indices[0])}' "
+                        f"/ Division '{division_name}' / Category '{cats[cat_sel[0]][1]}'.\n\n"
+                        "Proceeding may create or update a duplicate entry. Do you want to continue?"
+                    )
+                    proceed = messagebox.askyesno('Possible Duplicate', warn_msg)
+                    if not proceed:
+                        return
+                    # Proceed immediately
+                    do_submit_flow()
+                    return
+                else:
+                    # Color interpolation from Success (#90EE90) to Danger (#f8d7da)
+                    start_hex = '#90EE90'
+                    end_hex = '#f8d7da'
+                    start_rgb = (int(start_hex[1:3], 16), int(start_hex[3:5], 16), int(start_hex[5:7], 16))
+                    end_rgb = (int(end_hex[1:3], 16), int(end_hex[3:5], 16), int(end_hex[5:7], 16))
+
+                    steps = 18
+                    interval = 35  # ms -> ~630ms total
+
+                    def lerp(a, b, t):
+                        return int(a + (b - a) * t)
+
+                    dyn_style = 'DupFlashDynamic.TButton'
+                    try:
+                        ttk.Style(self.submit_button).configure(dyn_style, background=start_hex, foreground='white', borderwidth=0)
+                    except Exception:
+                        pass
+
+                    def step(i=0):
+                        try:
+                            if not hasattr(self, 'submit_button') or self.submit_button is None:
+                                return
+                            t = i / float(steps)
+                            r = lerp(start_rgb[0], end_rgb[0], t)
+                            g = lerp(start_rgb[1], end_rgb[1], t)
+                            b = lerp(start_rgb[2], end_rgb[2], t)
+                            hex_color = f"#{r:02x}{g:02x}{b:02x}"
+                            try:
+                                style = ttk.Style(self.submit_button)
+                                style.configure(dyn_style, background=hex_color)
+                                self.submit_button.configure(style=dyn_style)
+                            except Exception:
+                                pass
+
+                            if i < steps:
+                                self.after(interval, lambda: step(i + 1))
+                            else:
+                                # After animation completes, show confirmation dialog
+                                warn_msg = (
+                                    f"An entry already exists for Business Unit '{self.department_listbox.get(dept_indices[0])}' "
+                                    f"/ Division '{division_name}' / Category '{cats[cat_sel[0]][1]}'.\n\n"
+                                    "Proceeding may create or update a duplicate entry. Do you want to continue?"
+                                )
+                                proceed = messagebox.askyesno('Possible Duplicate', warn_msg)
+                                if not proceed:
+                                    # Revert style to Primary
+                                    try:
+                                        self.submit_button.configure(style='Primary.TButton')
+                                    except Exception:
+                                        pass
+                                    return
+                                # If proceed, continue with create flow now
+                                do_submit_flow()
+                        except Exception:
+                            pass
+
+                    # Kick off animated fade, then the dialog will run in the final step
+                    self.after(20, lambda: step(0))
+                    # Wait for the animation+dialog to run before continuing; but since askyesno is modal
+                    # and called from the final step, the code below will still execute after user choice.
+                    # We intentionally do not immediately return here so that after the user confirms,
+                    # the normal create/update code runs below.
+            except Exception:
+                pass
+        
 
         # If a duplicate was detected, the animation will call do_submit_flow() after user confirms
         if dup_app:
