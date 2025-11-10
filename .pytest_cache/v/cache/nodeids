@@ -1,3 +1,5 @@
 [
+  "tests/test_database.py::test_connect_db",
+  "tests/test_database.py::test_ensure_category",
   "tests/test_generate_smoke_test_data.py::test_generate_smoke_test_data_creates_records"
 ]
