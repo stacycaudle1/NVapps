@@ -1,5 +1,8 @@
 # NVapps - Business Application Risk Tracker
 
+Note: This repository contains two branches.
+Please use the code branch for all updates — changes will be merged into main after review.
+
 A comprehensive desktop application for tracking and managing business applications, their system integrations, risk assessments, and organizational relationships.
 
 ## 🎯 Overview
