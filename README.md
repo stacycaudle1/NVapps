@@ -7,6 +7,11 @@ A comprehensive desktop application for tracking and managing business applicati
 
 ## 🎯 Overview
 
+The NVApps application is a standalone, collaborative platform designed to help business units track, evaluate, and optimize key operational processes and applications. 
+By providing a centralized space for monitoring workflows that influence business models, budgets, and strategic decisions (Risk), 
+NVApps enables teams to make data-driven choices that enhance efficiency and financial planning. This tool supports better forecasting, resource allocation, 
+and performance visibility—empowering leadership to identify trends, anticipate challenges, and align investments with long-term organizational goals.
+
 NVapps is a Python-based GUI application built with Tkinter that helps organizations manage their application portfolio with a focus on:
 
 - **Business Unit Management**: Track applications across multiple business units and divisions
